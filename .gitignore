@@ -1,0 +1,27 @@
+# Entornos Virtuales
+venv/
+env/
+.env
+.env.local
+
+# Caché y artefactos de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Datos y Bases de Datos (Ignoramos todo el contenido para no subir Chroma/SQLite)
+datos/
+*.db
+*.sqlite3
+*.json
+
+# Archivos temporales de scraping y Playwright
+sesion_playwright/
+debug_amazon_*.html
+
+# Logs y reportes
+*.log
+*.csv
+*.txt
