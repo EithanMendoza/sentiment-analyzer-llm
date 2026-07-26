@@ -1,6 +1,7 @@
 """
 Administrar las sesiones de chat y almacenar el historial de mensajes crudos.
 """
+import sqlite3
 import uuid
 from modulos.base_datos.conexion import obtener_conexion
 
@@ -134,5 +135,32 @@ def crear_sesion(usuario_id: str, asin: str, titulo: str) -> str:
     except Exception as e:
         print(f"[ERROR DB] No se pudo crear la sesión explícita: {e}")
         return None
+    finally:
+        conn.close()
+
+def eliminar_todas_las_sesiones_del_usuario(usuario_id: str) -> bool:
+    """
+    Elimina todas las sesiones y sus respectivos mensajes asociados 
+    únicamente al usuario en sesión.
+    """
+    conn = obtener_conexion()
+    c = conn.cursor()
+    try:
+        # 1. Eliminamos los mensajes de las sesiones de este usuario
+        c.execute('''
+            DELETE FROM mensajes 
+            WHERE sesion_id IN (SELECT id FROM sesiones WHERE usuario_id = ?)
+        ''', (str(usuario_id),))
+        
+        # 2. Eliminamos las sesiones del usuario
+        c.execute('DELETE FROM sesiones WHERE usuario_id = ?', (str(usuario_id),))
+        
+        conn.commit()
+        print(f"[SQLITE] Historial de conversaciones eliminado para el usuario: {usuario_id}")
+        return True
+    except sqlite3.Error as e:
+        print(f"[ERROR SQLITE] Falló la eliminación del historial para {usuario_id}: {e}")
+        conn.rollback()
+        return False
     finally:
         conn.close()

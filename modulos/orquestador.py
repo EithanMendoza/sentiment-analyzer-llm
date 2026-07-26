@@ -47,9 +47,13 @@ class ControladorRAG:
             datos_adaptados.append(adaptado)
         return datos_adaptados
 
-    def procesar_nuevo_producto(self, asin: str, marketplace: str = "com.mx",usuario_id: str = "desconocido"):
-        print(f"\n[ORQUESTADOR] 1. Iniciando análisis completo para ASIN: {asin}")
-        estados_tareas[asin] = "procesando" 
+    def procesar_nuevo_producto(self, asin: str, marketplace: str = "com.mx", usuario_id: str = "desconocido"):
+        """
+        Orquesta el flujo completo de scraping, almacenamiento relacional e indexación
+        vectorial amarrando estrictamente la información al usuario en sesión.
+        """
+        print(f"\n[ORQUESTADOR] 1. Iniciando análisis completo para ASIN: {asin} (Usuario: {usuario_id})")
+        estados_tareas[asin] = "procesando"
         
         try:
             # ==========================================
@@ -58,11 +62,12 @@ class ControladorRAG:
             print("[ORQUESTADOR] Fase 1: Extrayendo ficha técnica...")
             datos_oficiales = self.extractor_oficial.obtener_ficha_tecnica(asin)
             
-            # Guardamos en la base de datos relacional
+            # 🚀 CORRECCIÓN CLAVE: Pasamos el usuario_id para que no quede como 'desconocido'
             guardar_o_actualizar_producto(
                 asin=asin, 
                 nombre=datos_oficiales["nombre"], 
-                caracteristicas=datos_oficiales["caracteristicas"]
+                caracteristicas=datos_oficiales["caracteristicas"],
+                usuario_id=str(usuario_id)  # <-- Asegura el dueño en la base de datos
             )
             
             # ==========================================
@@ -86,13 +91,15 @@ class ControladorRAG:
             # ==========================================
             print(f"[ORQUESTADOR] Fase 3: Vectorizando {len(datos_limpios)} reseñas...")
             
-            # Le pasamos el ASIN a la adaptación para que quede sellado en los vectores
+            # Le pasamos el ASIN a la adaptación para que quede sellado en los vectores.
+            # NOTA: Si deseas aislar los vectores por usuario en LlamaIndex/ChromaDB,
+            # puedes pasar también el usuario_id dentro de esta función adaptadora.
             datos_estructurados = self._adaptar_formato_para_llamaindex(datos_limpios, asin)
             
             self.indexador.construir_indice(datos_estructurados)
             
-            print(f"[ORQUESTADOR ÉXITO] Pipeline finalizado correctamente para {asin}.")
-            estados_tareas[asin] = "completado" 
+            print(f"[ORQUESTADOR ÉXITO] Pipeline finalizado correctamente para {asin} (Usuario: {usuario_id}).")
+            estados_tareas[asin] = "completado"
             return True
             
         except Exception as e:

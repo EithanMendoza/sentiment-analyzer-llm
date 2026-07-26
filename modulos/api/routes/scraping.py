@@ -5,12 +5,11 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Depends
 # 1. Esquema propio
 from modulos.api.schemas.scraping import SolicitudScraping
 
-# 2. Operaciones de Base de Datos (Importamos la función filtrada por usuario)
+# 2. Operaciones de Base de Datos
 from modulos.base_datos.operaciones.productos import (
     obtener_producto, 
     obtener_productos_por_usuario
 )
-from modulos.base_datos.operaciones.sesiones import crear_sesion
 
 # 3. Importamos el orquestador completo
 from modulos.orquestador import ControladorRAG, estados_tareas
@@ -64,13 +63,9 @@ async def iniciar_scraping(
     # === VÍA RÁPIDA: El producto ya fue analizado por este usuario ===
     producto_existente = obtener_producto(asin, usuario_id=usuario_id)
     if producto_existente:
-        titulo = f"Análisis de {producto_existente['nombre'][:25]}..."
-        sesion_id = crear_sesion(usuario_id=usuario_id, asin=asin, titulo=titulo)
-        
         return {
             "status": "listo",
             "asin": asin,
-            "sesion_id": sesion_id,
             "mensaje": "Producto recuperado de la base de datos local del usuario."
         }
 
@@ -82,13 +77,16 @@ async def iniciar_scraping(
             detail="El token de Apify no está configurado en el servidor."
         )
 
-    # Evitamos duplicidad de trabajos
+    # Solo bloqueamos si ese ASIN específico se está procesando actualmente
     if estados_tareas.get(asin) == "procesando":
         return {
             "status": "procesando",
             "asin": asin,
-            "mensaje": "Este producto ya está siendo extraído."
+            "mensaje": "Este producto ya está siendo extraído activamente."
         }
+
+    # Marcamos explícitamente el estado como procesando
+    estados_tareas[asin] = "procesando"
 
     # Lanzamos el trabajo en background asignando el usuario_id
     tareas_fondo.add_task(
@@ -111,25 +109,10 @@ async def consultar_estado_scraping(
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
     """
-    Endpoint para que el frontend consulte el progreso. 
-    Si ya terminó, genera la sesión automáticamente amarrada al usuario activo.
+    Consulta el estado del proceso sin crear sesiones o historiales de chat automáticamente.
     """
     estado_actual = estados_tareas.get(asin, "no_encontrado")
     
-    if estado_actual == "completado":
-        # Creamos la sesión aislada para el usuario
-        producto = obtener_producto(asin, usuario_id=usuario_id)
-        nombre = producto["nombre"] if producto else f"Producto {asin}"
-        titulo = f"Análisis de {nombre[:25]}..."
-        
-        sesion_id = crear_sesion(usuario_id=usuario_id, asin=asin, titulo=titulo)
-        
-        return {
-            "estado": "completado",
-            "asin": asin,
-            "sesion_id": sesion_id
-        }
-        
     return {
         "asin": asin,
         "estado": estado_actual

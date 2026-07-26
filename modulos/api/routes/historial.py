@@ -17,6 +17,7 @@ from modulos.base_datos.operaciones.sesiones import (
     obtener_mensajes_por_sesion,
     eliminar_sesion_db,
     obtener_detalles_sesion,
+    eliminar_todas_las_sesiones_del_usuario,
     crear_sesion
 )
 from modulos.base_datos.operaciones.productos import obtener_producto
@@ -107,3 +108,31 @@ async def borrar_conversacion(sesion_id: str, usuario_id: str = Depends(obtener_
         )
         
     return {"estado": "ok", "mensaje": f"Sesión {sesion_id} eliminada correctamente."}
+
+@router.delete("/usuarios/{usuario_id}/historial/purgar")
+async def purgar_historial_usuario(
+    usuario_id: str,
+    usuario_autenticado: str = Depends(obtener_usuario_actual)
+):
+    """
+    Purga el historial completo del usuario validando que coincida con el token de sesión.
+    """
+    # 1. Validación de seguridad: el usuario solo puede borrar su propio historial
+    if usuario_id != usuario_autenticado:
+        raise HTTPException(
+            status_code=403, 
+            detail="No tienes permisos para purgar el historial de otro usuario."
+        )
+        
+    # 2. Eliminación en la base de datos SQLite
+    exito = await asyncio.to_thread(eliminar_todas_las_sesiones_del_usuario, usuario_id)
+    if not exito:
+        raise HTTPException(
+            status_code=500, 
+            detail="Error al purgar el historial de conversaciones en la base de datos."
+        )
+        
+    return {
+        "status": "success",
+        "mensaje": f"Historial purgado exitosamente para el usuario {usuario_id}."
+    }

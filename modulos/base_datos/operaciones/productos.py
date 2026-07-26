@@ -17,29 +17,30 @@ def asegurar_columna_usuario(c):
             print(f"[SQLITE ERROR ALTER] No se pudo agregar la columna usuario_id: {e}")
 
 def guardar_o_actualizar_producto(asin: str, nombre: str, caracteristicas: list, usuario_id: str = "desconocido"):
-    """Inserta un nuevo producto vinculado al usuario o actualiza sus datos si ya existe."""
+    """
+    Inserta un nuevo producto o re-asigna/actualiza sus metadatos al usuario_id activo
+    evitando colisiones de clave primaria (UNIQUE constraint).
+    """
     conn = obtener_conexion()
     c = conn.cursor()
     
-    # Nos aseguramos de que la columna usuario_id exista antes de operar
     asegurar_columna_usuario(c)
-    
     caracteristicas_str = json.dumps(caracteristicas, ensure_ascii=False)
     
     try:
-        # 1. Comprobamos si el ASIN ya está registrado para ESTE usuario específico
-        c.execute('SELECT asin FROM productos WHERE asin = ? AND usuario_id = ?', (asin, str(usuario_id)))
+        # 1. Comprobamos si el ASIN existe en la tabla independientemente de quién sea el dueño
+        c.execute('SELECT asin FROM productos WHERE asin = ?', (asin,))
         producto_existe = c.fetchone()
         
         if producto_existe:
-            # 2. Si existe, actualizamos sus valores
+            # 2. Si el producto ya existe, actualizamos su nombre, características Y se lo re-asignamos al usuario actual
             c.execute('''
                 UPDATE productos 
-                SET nombre = ?, caracteristicas_json = ? 
-                WHERE asin = ? AND usuario_id = ?
-            ''', (nombre, caracteristicas_str, asin, str(usuario_id)))
+                SET nombre = ?, caracteristicas_json = ?, usuario_id = ? 
+                WHERE asin = ?
+            ''', (nombre, caracteristicas_str, str(usuario_id), asin))
         else:
-            # 3. Si no existe, creamos el registro amarrado al usuario_id
+            # 3. Si es un producto totalmente nuevo, hacemos el INSERT
             c.execute('''
                 INSERT INTO productos (asin, nombre, caracteristicas_json, usuario_id) 
                 VALUES (?, ?, ?, ?)
@@ -64,8 +65,8 @@ def obtener_todos_los_productos():
 
 def obtener_productos_por_usuario(usuario_id: str) -> list:
     """
-    [NUEVO MÈTODO DE AISLAMIENTO]: Devuelve ÚNICAMENTE los productos analizados
-    por el usuario autenticado. Ideal para poblar el combobox del Frontend en 'Chat nuevo'.
+    AISLAMIENTO ESTRICTO: Devuelve ÚNICAMENTE los productos analizados
+    y pertenecientes al usuario autenticado.
     """
     conn = obtener_conexion()
     c = conn.cursor()
