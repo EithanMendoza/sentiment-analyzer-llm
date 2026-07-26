@@ -26,6 +26,23 @@ class ControladorRAG:
         self.extractor_oficial = ExtractorDatosOficiales()
         self.indexador = IndexadorRAG()
 
+    def _adaptar_formato_para_sqlite(self, datos_apify, asin):
+        """🆕 TRADUCTOR CRÍTICO: Mapea las llaves en español al formato de columnas en inglés que exige SQLite."""
+        datos_sqlite = []
+        for item in datos_apify:
+            adaptado = {
+                "review_id": str(item.get("id", "sin_id")),
+                "asin": str(asin).strip().upper(),
+                "author": item.get("autor", "Anónimo"),
+                "title": item.get("titulo_comentario", "Sin título"),
+                "body": item.get("texto", ""),
+                "rating": int(item.get("estrellas", 0))
+            }
+            # Solo agregamos registros con contenido de texto válido
+            if len(adaptado["body"].strip()) >= 5:
+                datos_sqlite.append(adaptado)
+        return datos_sqlite
+
     def _adaptar_formato_para_llamaindex(self, datos_apify, asin):
         """Traduce el JSON que devuelve Apify y le inyecta el ASIN en los metadatos."""
         datos_adaptados = []

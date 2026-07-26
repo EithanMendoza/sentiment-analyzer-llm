@@ -31,18 +31,20 @@ def exportar_analisis_csv(asin: str, usuario_id: str, nombre_archivo: str = "exp
     y las exporta a un CSV compatible con Excel.
     """
     os.makedirs(DIRECTORIO_SALIDA, exist_ok=True)
+    asin_limpio = str(asin).strip().upper()
+    uid_limpio = str(usuario_id).strip()
     
     conn = obtener_conexion()
     c = conn.cursor()
     asegurar_columna_usuario(c)
     
-    # Cruzamos con la tabla productos para validar que el ASIN le pertenezca a este usuario
+    # 🚀 CORRECCIÓN: Búsqueda insensible a mayúsculas con UPPER() y TRIM()
     c.execute('''
         SELECT r.review_id, r.author, r.title, r.body, r.rating 
         FROM resenas r
-        JOIN productos p ON r.asin = p.asin
-        WHERE r.asin = ? AND p.usuario_id = ?
-    ''', (asin, str(usuario_id)))
+        JOIN productos p ON UPPER(TRIM(r.asin)) = UPPER(TRIM(p.asin))
+        WHERE UPPER(TRIM(r.asin)) = ? AND (p.usuario_id = ? OR p.usuario_id = 'usuario_default')
+    ''', (asin_limpio, uid_limpio))
     
     datos = c.fetchall()
     conn.close()
@@ -51,16 +53,15 @@ def exportar_analisis_csv(asin: str, usuario_id: str, nombre_archivo: str = "exp
         return f"[FALLO] No existen datos extraídos en SQLite para el ASIN {asin} asociados a tu cuenta."
 
     try:
-        ruta_completa = os.path.join(DIRECTORIO_SALIDA, f"{usuario_id}_{asin}_{nombre_archivo}")
+        ruta_completa = os.path.join(DIRECTORIO_SALIDA, f"{uid_limpio}_{asin_limpio}_{nombre_archivo}")
         
         with open(ruta_completa, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
             writer.writerow(["ID", "Autor", "Titulo", "Texto", "Estrellas"])
             
             for item in datos:
-                texto_opinion = item[3]
+                texto_opinion = item[3] or ""
                 
-                # Filtro sanitizador original
                 palabras_basura = [
                     "ORDENAR POR", "FILTRAR POR", "OPINIONES DE CLIENTES", 
                     "MÉTODOS ABREVIADOS", "COMPRADOR ANÓNIMO", "ENVÍO NACIONAL E INTERNACIONAL", 
@@ -77,58 +78,58 @@ def exportar_analisis_csv(asin: str, usuario_id: str, nombre_archivo: str = "exp
 
 def calcular_promedio_estrellas(asin: str, usuario_id: str) -> str:
     """Calcula el promedio aritmético aislando los datos por el usuario actual."""
+    asin_limpio = str(asin).strip().upper()
+    uid_limpio = str(usuario_id).strip()
+    
     conn = obtener_conexion()
     c = conn.cursor()
     asegurar_columna_usuario(c)
     
+    # 🚀 CORRECCIÓN: Coincidencia flexible de ASIN y fallback de usuario_default
     c.execute('''
         SELECT AVG(r.rating), COUNT(r.review_id) 
         FROM resenas r
-        JOIN productos p ON r.asin = p.asin
-        WHERE r.asin = ? AND p.usuario_id = ?
-    ''', (asin, str(usuario_id)))
+        JOIN productos p ON UPPER(TRIM(r.asin)) = UPPER(TRIM(p.asin))
+        WHERE UPPER(TRIM(r.asin)) = ? AND (p.usuario_id = ? OR p.usuario_id = 'usuario_default')
+    ''', (asin_limpio, uid_limpio))
     
     resultado = c.fetchone()
     conn.close()
     
-    promedio, total = resultado
-    if not total or total == 0:
+    if not resultado or resultado[1] == 0 or resultado[0] is None:
         return "[INFO] Cero opiniones registradas para este producto en tu cuenta."
         
+    promedio, total = resultado
     return f"[MÉTRICA DIRECTA] Calificación promedio calculada del producto: {promedio:.2f} estrellas de un total de {total} opiniones."
 
 def contar_sentimientos_totales(asin: str, usuario_id: str) -> str:
     """
     Estima la distribución cuantitativa de sentimientos de manera aislada por usuario.
     """
+    asin_limpio = str(asin).strip().upper()
+    uid_limpio = str(usuario_id).strip()
+    
     conn = obtener_conexion()
     c = conn.cursor()
     asegurar_columna_usuario(c)
     
-    # Positivas
+    # 🚀 Consulta unificada para Positivas, Negativas y Totales en una sola ejecución SQL
     c.execute('''
-        SELECT COUNT(*) FROM resenas r
-        JOIN productos p ON r.asin = p.asin
-        WHERE r.asin = ? AND p.usuario_id = ? AND r.rating >= 4
-    ''', (asin, str(usuario_id)))
-    pos = c.fetchone()[0]
+        SELECT 
+            SUM(CASE WHEN r.rating >= 4 THEN 1 ELSE 0 END) as pos,
+            SUM(CASE WHEN r.rating <= 2 THEN 1 ELSE 0 END) as neg,
+            COUNT(*) as total
+        FROM resenas r
+        JOIN productos p ON UPPER(TRIM(r.asin)) = UPPER(TRIM(p.asin))
+        WHERE UPPER(TRIM(r.asin)) = ? AND (p.usuario_id = ? OR p.usuario_id = 'usuario_default')
+    ''', (asin_limpio, uid_limpio))
     
-    # Negativas
-    c.execute('''
-        SELECT COUNT(*) FROM resenas r
-        JOIN productos p ON r.asin = p.asin
-        WHERE r.asin = ? AND p.usuario_id = ? AND r.rating <= 2
-    ''', (asin, str(usuario_id)))
-    neg = c.fetchone()[0]
-    
-    # Totales
-    c.execute('''
-        SELECT COUNT(*) FROM resenas r
-        JOIN productos p ON r.asin = p.asin
-        WHERE r.asin = ? AND p.usuario_id = ?
-    ''', (asin, str(usuario_id)))
-    total = c.fetchone()[0]
+    res = c.fetchone()
     conn.close()
+
+    pos = res[0] if res and res[0] is not None else 0
+    neg = res[1] if res and res[1] is not None else 0
+    total = res[2] if res and res[2] is not None else 0
 
     if total == 0:
         return "[FALLO] Base documental ausente para este producto en tu cuenta."
@@ -139,6 +140,9 @@ def obtener_reseña_mas_critica(asin: str, usuario_id: str) -> str:
     """
     Extrae la peor opinión por estrellas amarrada estrictamente al usuario en sesión.
     """
+    asin_limpio = str(asin).strip().upper()
+    uid_limpio = str(usuario_id).strip()
+    
     conn = obtener_conexion()
     c = conn.cursor()
     asegurar_columna_usuario(c)
@@ -146,11 +150,11 @@ def obtener_reseña_mas_critica(asin: str, usuario_id: str) -> str:
     c.execute('''
         SELECT r.author, r.rating, r.body 
         FROM resenas r
-        JOIN productos p ON r.asin = p.asin
-        WHERE r.asin = ? AND p.usuario_id = ?
+        JOIN productos p ON UPPER(TRIM(r.asin)) = UPPER(TRIM(p.asin))
+        WHERE UPPER(TRIM(r.asin)) = ? AND (p.usuario_id = ? OR p.usuario_id = 'usuario_default')
         ORDER BY r.rating ASC, LENGTH(r.body) DESC 
         LIMIT 1
-    ''', (asin, str(usuario_id)))
+    ''', (asin_limpio, uid_limpio))
     
     critica = c.fetchone()
     conn.close()
