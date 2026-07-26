@@ -8,19 +8,52 @@ los permisos mediante su token de acceso.
 
 import asyncio
 from fastapi import APIRouter, HTTPException, status, Depends
+from pydantic import BaseModel
+from typing import Optional
 
-# Importamos las operaciones directas a la base de datos (añadiendo obtener_detalles_sesion)
+# Importamos las operaciones directas a la base de datos (añadiendo obtener_detalles_sesion y crear_sesion)
 from modulos.base_datos.operaciones.sesiones import (
     obtener_sesiones_por_usuario,
     obtener_mensajes_por_sesion,
     eliminar_sesion_db,
-    obtener_detalles_sesion
+    obtener_detalles_sesion,
+    crear_sesion
 )
+from modulos.base_datos.operaciones.productos import obtener_producto
 
 # Importamos el guardia que decodifica el JWT
 from modulos.seguridad.autenticacion import obtener_usuario_actual
 
 router = APIRouter()
+
+
+class SolicitudCrearSesion(BaseModel):
+    asin: str
+    titulo: Optional[str] = None
+
+
+@router.post("/sesiones", status_code=status.HTTP_201_CREATED)
+async def crear_sesion_endpoint(
+    solicitud: SolicitudCrearSesion,
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
+    """
+    Crea una sesión de chat nueva y explícita para un producto ya analizado.
+    Se usa desde 'Chat nuevo' cuando el usuario elige retomar un producto
+    que ya fue analizado antes (aunque no tenga ningún chat activo todavía).
+    """
+    titulo = solicitud.titulo
+    if not titulo:
+        producto = obtener_producto(solicitud.asin)
+        nombre = producto["nombre"] if producto else f"Producto {solicitud.asin}"
+        titulo = f"Análisis de {nombre[:25]}..."
+
+    sesion_id = crear_sesion(usuario_id=usuario_id, asin=solicitud.asin, titulo=titulo)
+    if not sesion_id:
+        raise HTTPException(status_code=500, detail="No se pudo crear la sesión de chat.")
+
+    return {"id": sesion_id, "asin": solicitud.asin, "titulo": titulo}
+
 
 @router.get("/sesiones")
 async def listar_sesiones(usuario_id: str = Depends(obtener_usuario_actual)):

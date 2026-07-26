@@ -64,7 +64,15 @@ async def iniciar_sesion(credenciales: OAuth2PasswordRequestForm = Depends()):
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Generamos el token JWT inyectando el ID del usuario como 'sub'
-    token_jwt = crear_token_acceso(data={"sub": usuario_db["id"]})
+    # Generamos el token JWT inyectando el ID del usuario como 'sub', junto con
+    # los datos de perfil que el frontend necesita mostrar (nombre completo, correo).
+    # 🆕 Antes solo se mandaba 'sub'; el frontend ya intentaba leer 'username',
+    # 'nombre' y 'apellido' pero nunca llegaban en el token.
+    token_jwt = crear_token_acceso(data={
+        "sub": usuario_db["id"],
+        "username": usuario_db["correo"],
+        "nombre": usuario_db.get("nombre", ""),
+        "apellido": usuario_db.get("apellido", "")
+    })
     
     return {"access_token": token_jwt, "token_type": "bearer"}

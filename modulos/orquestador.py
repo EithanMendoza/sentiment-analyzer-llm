@@ -3,8 +3,9 @@ import asyncio
 from dotenv import load_dotenv
 
 # --- NUEVAS IMPORTACIONES ---
-from modulos.extractor.apify_client import ExtractorAmazonReef
+# Eliminamos apify_client y dejamos tu extractor local
 from modulos.extractor.scraper_info import ExtractorDatosOficiales
+from modulos.extractor.extractor import ExtractorEspecifico
 from modulos.base_datos.operaciones.productos import guardar_o_actualizar_producto
 from modulos.base_datos.operaciones.resenas import guardar_resenas_masivas
 # ---------------------------
@@ -19,33 +20,32 @@ class ControladorRAG:
     """
     Orquesta el flujo completo: 
     1. Scraping ligero (Características) -> Guardado SQL
-    2. Scraping profundo (Apify Reseñas) -> Guardado SQL
+    2. Scraping profundo (Playwright Local) -> Guardado SQL
     3. Vectorización -> Guardado ChromaDB
     """
     def __init__(self):
-        self.api_token = os.getenv("APIFY_TOKEN")
-        if not self.api_token:
-            raise ValueError("Falta el APIFY_TOKEN en las variables de entorno.")
-            
-        self.extractor_apify = ExtractorAmazonReef(api_token=self.api_token)
-        self.extractor_oficial = ExtractorDatosOficiales() # <--- Instanciamos BS4
+        # Instanciamos tu nuevo extractor local de Playwright
+        self.extractor_local = ExtractorEspecifico() 
+        self.extractor_oficial = ExtractorDatosOficiales()
         self.indexador = IndexadorRAG()
 
-    def _adaptar_formato_para_llamaindex(self, datos_apify, asin):
-        """Traduce el JSON de Apify y le inyecta el ASIN en los metadatos."""
+    def _adaptar_formato_para_llamaindex(self, datos_locales, asin):
+        """Traduce el JSON de tu extractor local y le inyecta el ASIN en los metadatos."""
         datos_adaptados = []
-        for item in datos_apify:
+        for item in datos_locales:
             adaptado = {
-                "id": item.get("review_id", "sin_id"),
-                "autor": item.get("author", "Anónimo"),
-                "estrellas": item.get("rating", 0),
-                "titulo_comentario": item.get("title", "Sin título"),
-                "texto": item.get("body", ""),
-                "fuente": "Amazon vía Reef API",
+                # Ahora leemos las llaves exactas que genera tu extractor.py
+                "id": item.get("id", "sin_id"),
+                "autor": item.get("autor", "Anónimo"),
+                "estrellas": item.get("estrellas", 0),
+                "titulo_comentario": item.get("titulo_comentario", "Sin título"),
+                "texto": item.get("texto", ""),
+                "fuente": item.get("fuente", "Amazon vía Local Playwright"),
                 "metadatos": {
                     "asin": asin, # <--- CRUCIAL: Añadimos el ASIN a los metadatos de ChromaDB
-                    "fecha_publicacion": item.get("date", "Desconocida"),
-                    "compra_verificada": item.get("verified", False)
+                    "fecha_publicacion": item.get("fecha_publicacion", "Desconocida"),
+                    "compra_verificada": item.get("compra_verificada", False),
+                    "variante": item.get("variante", "")
                 }
             }
             datos_adaptados.append(adaptado)
@@ -70,10 +70,15 @@ class ControladorRAG:
             )
             
             # ==========================================
-            # FASE 2: RESEÑAS DE USUARIOS (Apify -> SQLite)
+            # FASE 2: RESEÑAS DE USUARIOS (Playwright Local -> SQLite)
             # ==========================================
-            print("[ORQUESTADOR] Fase 2: Extrayendo reseñas de clientes...")
-            datos_limpios = self.extractor_apify.extraer_y_limpiar(asin=asin, marketplace=marketplace)
+            print("[ORQUESTADOR] Fase 2: Extrayendo reseñas de clientes de forma local...")
+            
+            # Construimos la URL completa usando el ASIN y el marketplace
+            url_producto = f"https://www.amazon.{marketplace}/product-reviews/{asin}/"
+            
+            # Llamamos a tu clase de Playwright. 'scrolls=3' extraerá hasta 3 páginas de reseñas.
+            datos_limpios = self.extractor_local.extraer(url=url_producto, scrolls=3)
             
             if not datos_limpios:
                 print(f"[ORQUESTADOR ERROR] No se obtuvieron reseñas para {asin}.")

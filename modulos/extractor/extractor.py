@@ -233,10 +233,15 @@ class ExtractorEspecifico:
                 context.close()
 
         if reseñas_raspadas:
-            self._guardar_json(reseñas_raspadas)
+            self._guardar_json(reseñas_raspadas) # Tu código original
             print(f"🎉 Extracción masiva terminada. Catálogo finalizado con {len(reseñas_raspadas)} opiniones guardadas de forma unificada.")
+            
+            # 👇 AÑADE ESTA LÍNEA 👇
+            return reseñas_raspadas
         else:
             print("⚠️ [ADVERTENCIA] No se capturaron reseñas. Asegúrate de estar parado en la página de comentarios completa.")
+            # 👇 AÑADE ESTA LÍNEA 👇
+            return []
 
 if __name__ == "__main__":
     url_test = input("Ingresa URL de prueba (Amazon/MercadoLibre): ").strip()

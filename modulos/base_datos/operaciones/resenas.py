@@ -16,14 +16,15 @@ def guardar_resenas_masivas(asin: str, resenas: list):
     datos_a_insertar = []
     for r in resenas:
         datos_a_insertar.append((
-            r.get("review_id", ""),
+            # 🔴 AQUI ESTÁ EL CAMBIO: Adaptado a las llaves en español de tu extractor local
+            r.get("id", ""),
             asin,
-            r.get("author", "Anónimo"),
-            r.get("rating", 0),
-            r.get("title", ""),
-            r.get("body", ""),
-            r.get("date", ""),
-            r.get("verified", False)
+            r.get("autor", "Anónimo"),
+            r.get("estrellas", 0),
+            r.get("titulo_comentario", ""),
+            r.get("texto", ""),
+            r.get("fecha_publicacion", ""),
+            r.get("compra_verificada", False)
         ))
         
     try:

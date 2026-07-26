@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Depends
 from modulos.api.schemas.scraping import SolicitudScraping
 
 # 2. Operaciones de Base de Datos (¡NUEVO!)
-from modulos.base_datos.operaciones.productos import obtener_producto
+from modulos.base_datos.operaciones.productos import obtener_producto, obtener_todos_los_productos
 from modulos.base_datos.operaciones.sesiones import crear_sesion
 
 # 3. Importamos el orquestador completo
@@ -18,16 +18,30 @@ from modulos.seguridad.autenticacion import obtener_usuario_actual
 router = APIRouter()
 orquestador = ControladorRAG()
 
+import re
+
 def extraer_asin_de_url(texto: str) -> str:
     """Extrae el ASIN (10 caracteres) de un enlace o texto plano."""
     texto = texto.strip()
     if len(texto) == 10 and texto.isalnum():
         return texto.upper()
     
-    match = re.search(r'/(?:dp|gp/product|product)/([A-Z0-9]{10})', texto)
+    # 👇 CORRECCIÓN: Agregamos customer-reviews y product-reviews a la regla
+    match = re.search(r'/(?:dp|gp/product|product|customer-reviews|product-reviews)/([A-Z0-9]{10})', texto)
     if match:
         return match.group(1).upper()
     return None
+
+@router.get("/productos")
+async def listar_productos(usuario_id: str = Depends(obtener_usuario_actual)):
+    """
+    Devuelve todos los productos ya analizados en la base de datos.
+    El frontend lo usa en 'Chat nuevo' para dejar elegir sobre qué producto
+    seguir preguntando, aunque ese producto ya no tenga ningún chat activo.
+    """
+    productos = obtener_todos_los_productos()
+    return {"productos": productos}
+
 
 @router.post("/scraper/iniciar", status_code=202)
 async def iniciar_scraping(

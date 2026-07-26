@@ -119,3 +119,20 @@ async def obtener_ultima_metrica():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/metricas/ultimo-asin")
+async def obtener_ultimo_asin():
+    """Devuelve el ASIN del último producto guardado en la base de datos."""
+    def fetch_ultimo():
+        conn = obtener_conexion()
+        c = conn.cursor()
+        # Usamos rowid para obtener el último insertado
+        c.execute('SELECT asin FROM productos ORDER BY rowid DESC LIMIT 1')
+        fila = c.fetchone()
+        conn.close()
+        return fila[0] if fila else None
+        
+    ultimo_asin = await asyncio.to_thread(fetch_ultimo)
+    if not ultimo_asin:
+        raise HTTPException(status_code=404, detail="No hay productos en la base de datos.")
+    return {"asin": ultimo_asin}
