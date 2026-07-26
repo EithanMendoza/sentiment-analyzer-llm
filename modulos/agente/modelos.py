@@ -16,11 +16,16 @@ def configurar_modelos():
     embed_model = OllamaEmbedding(model_name=MODELO_EMBEDDING)
     
     print(f"[INFO] Configurando LLM {MODELO_LLM} con restricciones de hardware...")
+
+    # Nos aseguramos de inyectar 'stream': True a nivel de la API de Ollama
+    kwargs_ollama = CONFIG_LLM.get("additional_kwargs", {})
+    kwargs_ollama["stream"] = True
+
     llm = Ollama(
         model=MODELO_LLM,
         temperature=CONFIG_LLM["temperature"],
         request_timeout=CONFIG_LLM["request_timeout"],
-        additional_kwargs=CONFIG_LLM["additional_kwargs"]
+        additional_kwargs=kwargs_ollama
     )
     
     # Asignación global para LlamaIndex

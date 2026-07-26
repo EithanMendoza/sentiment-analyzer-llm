@@ -17,6 +17,7 @@ from modulos.api.schemas.chat import PeticionMensaje
 # 2. Operaciones de base de datos (Añadimos obtener_detalles_sesion)
 from modulos.base_datos.operaciones.sesiones import guardar_mensaje, obtener_detalles_sesion
 from modulos.base_datos.operaciones.auditoria import guardar_registro_auditoria
+from modulos.base_datos.operaciones.productos import obtener_producto
 
 # 3. Guardia de seguridad
 from modulos.seguridad.autenticacion import obtener_usuario_actual
@@ -53,6 +54,21 @@ async def hacer_consulta(
     
     asin_real = detalles_sesion["asin"]
 
+    # --- NUEVA INTEGRACIÓN: Función para obtener datos del producto ---
+    datos_producto = await asyncio.to_thread(obtener_producto, asin_real)
+
+    if datos_producto and datos_producto.get("caracteristicas"):
+        caracteristicas_lista = datos_producto["caracteristicas"]
+        # Formateamos la lista de Python a texto legible con viñetas para la IA
+        if isinstance(caracteristicas_lista, list):
+            caracteristicas_texto = "\n- " + "\n- ".join(str(c) for c in caracteristicas_lista)
+        else:
+            caracteristicas_texto = str(caracteristicas_lista)
+        nombre_prod = datos_producto["nombre"]
+    else:
+        caracteristicas_texto = "No hay especificaciones adicionales registradas."
+        nombre_prod = detalles_sesion["titulo"]
+
     # 3. Guardamos la pregunta del usuario inyectando el ASIN real
     await asyncio.to_thread(
         guardar_mensaje, 
@@ -66,7 +82,12 @@ async def hacer_consulta(
     try:
         # 4. Iniciar la consulta al motor RAG filtrando por ASIN
         tiempo_inicio = time.time()
-        respuesta_stream = motor_ia.consultar(peticion.mensaje, asin_producto=asin_real)
+        respuesta_stream = await motor_ia.consultar( #Esperamos la llamada asíncrona
+            pregunta=peticion.mensaje, 
+            asin_producto=asin_real,
+            nombre_producto=nombre_prod,
+            caracteristicas=caracteristicas_texto
+        )
 
         # 5. Generador asíncrono para el streaming y recolección de métricas
         async def generador_tokens():
@@ -75,14 +96,18 @@ async def hacer_consulta(
             buffer_respuesta = ""
 
             try:
-                # Extraemos tokens del generador de LlamaIndex
-                for token in respuesta_stream.response_gen:
+                # respuesta_stream ahora es el generador directo de Ollama
+                async for chunk in respuesta_stream:
                     if tiempo_primer_token is None:
                         tiempo_primer_token = time.time()
                     
-                    buffer_respuesta += token
+                    # El texto viene dentro de la propiedad 'delta'
+                    texto_fragmento = chunk.delta
+                    
+                    buffer_respuesta += texto_fragmento
                     conteo_tokens += 1
-                    yield token
+                    
+                    yield texto_fragmento
                     
                 # 6. Al terminar, guardamos la respuesta de la IA en la BD con su ASIN
                 if buffer_respuesta.strip():
