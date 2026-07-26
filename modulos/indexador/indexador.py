@@ -14,21 +14,13 @@ class IndexadorRAG:
         # Configuramos el modelo de embeddings local de Ollama
         self.embed_model = OllamaEmbedding(model_name="nomic-embed-text")
 
-    def construir_indice(self, datos_estructurados: list):
+    def construir_indice(self, datos_estructurados: list, usuario_id: str = "desconocido"):
         """
         ================================================================================
         CAMBIO DE PARADIGMA V2 (Arquitectura Multi-Producto y Aislamiento Vectorial)
         ================================================================================
-        Fase 1 (Previa): In-Memory Processing para evitar cuellos de botella de I/O.
-        
         Fase 2 (Actual): El sistema ahora escala para soportar múltiples productos 
-        simultáneamente sin colapsar ni mezclar información.
-        1. Persistencia Acumulativa: Se eliminó `delete_collection`. Ahora usamos 
-           `get_or_create_collection` para añadir vectores nuevos sin borrar el historial.
-        2. Etiquetado Fuerte: Se inyecta obligatoriamente el `asin` en los metadatos 
-           de cada fragmento (Document) para que ChromaDB lo indexe.
-        3. Aislamiento Lógico: Gracias a esto, el motor de inferencia puede aplicar un 
-           filtro estricto (where={"asin": ...}) aislando el contexto del LLM.
+        y múltiples usuarios simultáneamente sin colapsar ni mezclar información.
         ================================================================================
         """
         if not datos_estructurados:
@@ -42,7 +34,7 @@ class IndexadorRAG:
             estrellas_valor = item.get("estrellas") if item.get("estrellas") else 0
             metadatos_ia = item.get("metadatos", {})
             
-            # FORMATO BLINDADO CORREGIDO: Ahora el LLM sí "verá" la calificación y la fecha
+            # FORMATO BLINDADO CORREGIDO: El LLM verá la calificación y la fecha
             texto_estructurado = f"""
             === RESEÑA DE CLIENTE ===
             AUTOR: {item.get('autor', 'Anónimo')}
@@ -63,14 +55,14 @@ class IndexadorRAG:
                     "sentimiento": str(metadatos_ia.get("sentimiento", "Neutral")),
                     "categoria": str(metadatos_ia.get("categoria", "General")),
                     "fecha": str(metadatos_ia.get("fecha_publicacion", "")),
-                    # LA PIEZA CLAVE DE LA FASE 2:
-                    "asin": str(metadatos_ia.get("asin", "desconocido"))
+                    "asin": str(metadatos_ia.get("asin", "desconocido")),
+                    # CAMBIO CLAVE: Guardamos obligatoriamente el usuario que indexa esta reseña
+                    "usuario_id": str(usuario_id)
                 }
             )
             documentos_llamaindex.append(doc)
 
         print("[INFO] Inicializando ChromaDB localmente...")
-        # CONFIGURACIÓN EXPLÍCITA DE TENANT: Previene el bloqueo de hilos fantasmas en Windows
         db_cliente = chromadb.PersistentClient(
             path=self.ruta_db,
             settings=Settings(
@@ -80,20 +72,16 @@ class IndexadorRAG:
             )
         )
         
-        # SOLUCIÓN PARA LA RÚBRICA: Forzamos la métrica de distancia a Similitud de Coseno ('cosine')
-        # Utilizamos get_or_create_collection para mantener vivos los productos anteriores
         chroma_collection = db_cliente.get_or_create_collection(
             name=self.nombre_coleccion,
             metadata={"hnsw:space": "cosine"}
         )
         
-        # Acoplamos ChromaDB como el almacén de vectores oficial de LlamaIndex 
         vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
         print("[INFO] Generando embeddings e indexando en la Base de Datos Vectorial...")
         
-        # Construimos el índice pasando nuestros documentos, embeddings y el contexto de almacenamiento
         index = VectorStoreIndex.from_documents(
             documentos_llamaindex,
             storage_context=storage_context,
@@ -102,3 +90,40 @@ class IndexadorRAG:
         
         print(f"[OK] Base de datos vectorial actualizada con éxito en la carpeta '{self.ruta_db}'.")
         return index
+
+    def eliminar_vectores_de_usuario(self, usuario_id: str) -> bool:
+        """
+        Elimina en ChromaDB ÚNICAMENTE los datos vectoriales asociados a un usuario_id.
+        Implementación auto-contenida para evitar errores de atributos faltantes.
+        """
+        try:
+            # Inicializamos el cliente directamente sin depender de métodos auxiliares externos
+            db_cliente = chromadb.PersistentClient(
+                path=self.ruta_db,
+                settings=Settings(
+                    chroma_tenant="default_tenant",
+                    chroma_database="default_database",
+                    allow_reset=True
+                )
+            )
+            
+            try:
+                coleccion = db_cliente.get_collection(name=self.nombre_coleccion)
+            except Exception:
+                print(f"[VECTORIAL] La colección '{self.nombre_coleccion}' aún no existe o está vacía.")
+                return True
+            
+            # Buscamos los registros usando la etiqueta del usuario_id
+            registros = coleccion.get(where={"usuario_id": str(usuario_id)})
+            ids_a_borrar = registros.get("ids", [])
+            
+            if ids_a_borrar:
+                coleccion.delete(ids=ids_a_borrar)
+                print(f"[VECTORIAL] Se eliminaron {len(ids_a_borrar)} vectores del usuario '{usuario_id}'.")
+            else:
+                print(f"[VECTORIAL] No se encontraron vectores asociados al usuario '{usuario_id}'.")
+            
+            return True
+        except Exception as e:
+            print(f"[ERROR VECTORIAL] Falló al eliminar vectores del usuario '{usuario_id}': {e}")
+            return False

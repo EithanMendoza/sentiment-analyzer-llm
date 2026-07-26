@@ -2,13 +2,12 @@ import os
 import asyncio
 from dotenv import load_dotenv
 
-# --- NUEVAS IMPORTACIONES ---
-# Eliminamos apify_client y dejamos tu extractor local
+# --- IMPORTACIONES ACTUALIZADAS (APIFY) ---
 from modulos.extractor.scraper_info import ExtractorDatosOficiales
-from modulos.extractor.extractor import ExtractorEspecifico
+from modulos.extractor.apify_client import extraer_resenas_apify
 from modulos.base_datos.operaciones.productos import guardar_o_actualizar_producto
 from modulos.base_datos.operaciones.resenas import guardar_resenas_masivas
-# ---------------------------
+# ------------------------------------------
 
 from modulos.indexador.indexador import IndexadorRAG
 
@@ -20,27 +19,24 @@ class ControladorRAG:
     """
     Orquesta el flujo completo: 
     1. Scraping ligero (Características) -> Guardado SQL
-    2. Scraping profundo (Playwright Local) -> Guardado SQL
+    2. Scraping profundo (Apify Cloud) -> Guardado SQL
     3. Vectorización -> Guardado ChromaDB
     """
     def __init__(self):
-        # Instanciamos tu nuevo extractor local de Playwright
-        self.extractor_local = ExtractorEspecifico() 
         self.extractor_oficial = ExtractorDatosOficiales()
         self.indexador = IndexadorRAG()
 
-    def _adaptar_formato_para_llamaindex(self, datos_locales, asin):
-        """Traduce el JSON de tu extractor local y le inyecta el ASIN en los metadatos."""
+    def _adaptar_formato_para_llamaindex(self, datos_apify, asin):
+        """Traduce el JSON que devuelve Apify y le inyecta el ASIN en los metadatos."""
         datos_adaptados = []
-        for item in datos_locales:
+        for item in datos_apify:
             adaptado = {
-                # Ahora leemos las llaves exactas que genera tu extractor.py
                 "id": item.get("id", "sin_id"),
                 "autor": item.get("autor", "Anónimo"),
                 "estrellas": item.get("estrellas", 0),
                 "titulo_comentario": item.get("titulo_comentario", "Sin título"),
                 "texto": item.get("texto", ""),
-                "fuente": item.get("fuente", "Amazon vía Local Playwright"),
+                "fuente": item.get("fuente", "Amazon vía Apify"),
                 "metadatos": {
                     "asin": asin, # <--- CRUCIAL: Añadimos el ASIN a los metadatos de ChromaDB
                     "fecha_publicacion": item.get("fecha_publicacion", "Desconocida"),
@@ -51,7 +47,7 @@ class ControladorRAG:
             datos_adaptados.append(adaptado)
         return datos_adaptados
 
-    def procesar_nuevo_producto(self, asin: str, marketplace: str = "com.mx"):
+    def procesar_nuevo_producto(self, asin: str, marketplace: str = "com.mx",usuario_id: str = "desconocido"):
         print(f"\n[ORQUESTADOR] 1. Iniciando análisis completo para ASIN: {asin}")
         estados_tareas[asin] = "procesando" 
         
@@ -70,18 +66,15 @@ class ControladorRAG:
             )
             
             # ==========================================
-            # FASE 2: RESEÑAS DE USUARIOS (Playwright Local -> SQLite)
+            # FASE 2: RESEÑAS DE USUARIOS (Apify Cloud -> SQLite)
             # ==========================================
-            print("[ORQUESTADOR] Fase 2: Extrayendo reseñas de clientes de forma local...")
+            print("[ORQUESTADOR] Fase 2: Extrayendo reseñas de clientes usando Apify...")
             
-            # Construimos la URL completa usando el ASIN y el marketplace
-            url_producto = f"https://www.amazon.{marketplace}/product-reviews/{asin}/"
-            
-            # Llamamos a tu clase de Playwright. 'scrolls=3' extraerá hasta 3 páginas de reseñas.
-            datos_limpios = self.extractor_local.extraer(url=url_producto, scrolls=3)
+            # Llamamos a tu cliente de Apify pasándole el ASIN
+            datos_limpios = extraer_resenas_apify(asin=asin)
             
             if not datos_limpios:
-                print(f"[ORQUESTADOR ERROR] No se obtuvieron reseñas para {asin}.")
+                print(f"[ORQUESTADOR ERROR] No se obtuvieron reseñas de Apify para {asin}.")
                 estados_tareas[asin] = "error"
                 return False
 

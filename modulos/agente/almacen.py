@@ -18,7 +18,13 @@ def obtener_indice_vectorial():
 
     print("[INFO] Conectando a ChromaDB...")
     db_cliente = chromadb.PersistentClient(path=RUTA_DB)
-    chroma_collection = db_cliente.get_collection(name=COLECCION_DB)
-    vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
     
+    # CAMBIO CRUCIAL: Usamos get_or_create_collection para evitar que falle 
+    # si la colección aún no fue consultada o indexada en este ciclo.
+    chroma_collection = db_cliente.get_or_create_collection(
+        name=COLECCION_DB,
+        metadata={"hnsw:space": "cosine"}
+    )
+    
+    vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
     return VectorStoreIndex.from_vector_store(vector_store)

@@ -3,23 +3,25 @@ Rutas de auditoría y rendimiento del LLM.
 
 Expone endpoints para recuperar métricas operativas (latencia, tokens por 
 segundo, tiempo de respuesta) almacenadas durante las ejecuciones del modelo.
-Incluye soporte para paginación de resultados.
+Incluye soporte para paginación de resultados y limpieza selectiva de datos por perfil.
 """
 
 import asyncio
-from fastapi import APIRouter, Query, HTTPException
+# AGREGAMOS Request AQUÍ EN LAS IMPORTACIONES OFICIALES
+from fastapi import APIRouter, Query, HTTPException, Depends, Request
 
 from modulos.base_datos.operaciones.auditoria import (
     obtener_ultima_metrica,
     obtener_metricas_paginadas
 )
+from modulos.base_datos.operaciones.productos import vaciar_productos_por_usuario
+from modulos.indexador.indexador import IndexadorRAG
 
 router = APIRouter()
 
 @router.get("/metricas/ultima")
 async def consultar_ultima_auditoria():
     """Endpoint para obtener las métricas de la última consulta realizada."""
-    # Usamos asyncio.to_thread para no bloquear el Event Loop de FastAPI
     resultado = await asyncio.to_thread(obtener_ultima_metrica)
     
     if not resultado:
@@ -38,3 +40,59 @@ async def consultar_todas_auditorias(
     """
     resultados = await asyncio.to_thread(obtener_metricas_paginadas, limit, skip)
     return resultados
+
+@router.post("/metricas/limpiar-cache")
+async def limpiar_datos_perfil_usuario(request: Request):
+    """
+    Endpoint que intercepta la acción de 'Borrar datos/Limpiar caché' del frontend.
+    Elimina de manera estricta los productos, reseñas y vectores asociados
+    ÚNICAMENTE al perfil del usuario autenticado.
+    """
+    try:
+        # 1. Validación del Header de Autenticación
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            raise HTTPException(status_code=401, detail="No se proporcionó token de autenticación.")
+            
+        token = auth_header.replace("Bearer ", "").strip()
+        
+        # 2. Decodificación directa con PyJWT (sin importar funciones de autenticacion.py)
+        import jwt
+        try:
+            # Decodificamos sin verificar la firma localmente sólo para leer los claims de sesión
+            payload = jwt.decode(token, options={"verify_signature": False})
+        except Exception as e_jwt:
+            print(f"[ERROR JWT]: No se pudo decodificar el token: {e_jwt}")
+            raise HTTPException(status_code=401, detail="Token inválido o malformado.")
+            
+        # Extraemos el ID soportando tanto 'sub' como 'id'
+        usuario_id = payload.get("sub") or payload.get("id")
+        if not usuario_id:
+            raise HTTPException(status_code=401, detail="El token no contiene un identificador de usuario válido.")
+            
+        usuario_id = str(usuario_id)
+        print(f"[DEBUG LIMPIEZA] Iniciando vaciado para el usuario: {usuario_id}")
+
+        # 3. Purgamos los datos en SQLite
+        await asyncio.to_thread(vaciar_productos_por_usuario, usuario_id)
+        
+        # 4. Purgamos ChromaDB de forma aislada
+        try:
+            indexador = IndexadorRAG()
+            await asyncio.to_thread(indexador.eliminar_vectores_de_usuario, usuario_id)
+        except Exception as err_vector:
+            print(f"[WARN VECTORIAL] No se completó la purga vectorial para {usuario_id}: {err_vector}")
+
+        return {
+            "status": "success",
+            "mensaje": "Los datos y la base vectorial de tu perfil han sido eliminados correctamente."
+        }
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"[ERROR CRÍTICO LIMPIAR CACHÉ]: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno al procesar la limpieza del perfil: {str(e)}"
+        )

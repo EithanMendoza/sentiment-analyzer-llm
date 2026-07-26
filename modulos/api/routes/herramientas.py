@@ -4,8 +4,9 @@ Rutas para las métricas, diagnósticos y herramientas de exportación.
 import os
 import glob
 import asyncio
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException,Depends, status
 from fastapi.responses import FileResponse
+from modulos.seguridad.autenticacion import obtener_usuario_actual
 
 # Importamos las herramientas lógicas (Actualizadas para SQLite)
 from modulos.base_datos.operaciones.herramientas import (
@@ -70,19 +71,25 @@ async def endpoint_exportar_csv(asin: str):
     )
 
 @router.get("/metricas/resumen/{asin}")
-async def endpoint_metricas_rapidas(asin: str):
-    """Devuelve un resumen estadístico consultando directamente la base de datos relacional."""
+async def endpoint_metricas_rapidas(
+    asin: str, 
+    usuario_id: str = Depends(obtener_usuario_actual)  # <-- INYECTAMOS LA SEGURIDAD AQUÍ
+):
+    """
+    Devuelve un resumen estadístico consultando la base de datos relacional,
+    filtrando los datos de forma estricta por el usuario autenticado.
+    """
     
-    # 1. Ejecutamos los cálculos asíncronos en SQLite
-    promedio = await asyncio.to_thread(calcular_promedio_estrellas, asin)
-    sentimientos = await asyncio.to_thread(contar_sentimientos_totales, asin)
-    critica = await asyncio.to_thread(obtener_reseña_mas_critica, asin)
+    # 1. Ejecutamos los cálculos asíncronos pasándole el usuario_id a cada función
+    promedio = await asyncio.to_thread(calcular_promedio_estrellas, asin, usuario_id)
+    sentimientos = await asyncio.to_thread(contar_sentimientos_totales, asin, usuario_id)
+    critica = await asyncio.to_thread(obtener_reseña_mas_critica, asin, usuario_id)
     
-    # 2. Extraemos el nombre oficial del producto desde la tabla 'productos'
-    producto_data = await asyncio.to_thread(obtener_producto, asin)
+    # 2. Extraemos el nombre oficial garantizando que el producto le pertenezca a este usuario
+    producto_data = await asyncio.to_thread(obtener_producto, asin, usuario_id)
     producto_nombre = producto_data["nombre"] if producto_data else f"Producto Desconocido ({asin})"
 
-    # 3. Retornamos todo listo para el Dashboard en React
+    # 3. Retornamos todo listo y aislado para el Dashboard en React
     return {
         "producto": producto_nombre,
         "promedio_estrellas": promedio,
