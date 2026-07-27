@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import requests
@@ -56,6 +57,12 @@ class ExtractorAmazonReef:
             
             datos_crudos = response.json()
             print(f"[EXTRACTOR] ✅ Datos recibidos. Limpiando {len(datos_crudos)} registros...")
+
+            # --- CÓDIGO DE AUDITORÍA INICIO ---
+            with open("debug_apify_respuesta.json", "w", encoding="utf-8") as f:
+                json.dump(datos_crudos, f, indent=4, ensure_ascii=False)
+            print("🛑 AUDITORÍA: Revisa el archivo 'debug_apify_respuesta.json' en la raíz de tu proyecto.")
+            # --- CÓDIGO DE AUDITORÍA FIN ---
             
             # === 3. PROCESAMIENTO Y MAPEO DE LLAVES ===
             datos_limpios = []
@@ -66,15 +73,21 @@ class ExtractorAmazonReef:
                 if cuerpo_limpio:
                     # Mapeamos las llaves crudas de Apify al formato que espera tu orquestador
                     resena_mapeada = {
-                        "id": item.get("id") or item.get("reviewId", "sin_id"),
+                        # CORRECCIÓN 1: 'review_id' exacto como viene de Apify
+                        "id": item.get("review_id") or item.get("id", "sin_id"),
+                        
                         "autor": item.get("author") or item.get("name", "Anónimo"),
                         "estrellas": int(item.get("rating") or item.get("stars", 0)),
-                        "titulo_comentario": item.get("reviewTitle") or item.get("title", "Sin título"),
+                        "titulo_comentario": item.get("title") or item.get("reviewTitle", "Sin título"),
                         "texto": cuerpo_limpio,
                         "fuente": "Amazon vía Apify",
                         "fecha_publicacion": item.get("date") or item.get("reviewDate", "Desconocida"),
-                        "compra_verificada": bool(item.get("isVerified") or item.get("verifiedPurchase", False)),
-                        "variante": item.get("variant") or item.get("options", "")
+                        
+                        # CORRECCIÓN 2: Apify usa 'verified'
+                        "compra_verificada": bool(item.get("verified") or item.get("isVerified", False)),
+                        
+                        # CORRECCIÓN 3: Apify manda el color/tamaño en 'format'
+                        "variante": item.get("format") or item.get("variant", "")
                     }
                     datos_limpios.append(resena_mapeada)
                     

@@ -47,8 +47,10 @@ class ControladorRAG:
         """Traduce el JSON que devuelve Apify y le inyecta el ASIN en los metadatos."""
         datos_adaptados = []
         for item in datos_apify:
+            # Tolerancia: Busca 'review_id', si no está, busca 'id', si no, usa 'sin_id'
+            id_seguro = item.get("review_id", item.get("id", "sin_id"))
             adaptado = {
-                "id": item.get("id", "sin_id"),
+                "id": id_seguro,
                 "autor": item.get("autor", "Anónimo"),
                 "estrellas": item.get("estrellas", 0),
                 "titulo_comentario": item.get("titulo_comentario", "Sin título"),
