@@ -15,16 +15,16 @@ RUTA_DB = os.path.join("datos", "base_vectorial")
 COLECCION_DB = "reviews_analizadas"
 
 # Modelos de Ollama
-MODELO_LLM = "qwen2.5:7b-instruct-q4_K_M"  # 🚀 Cambiado al modelo 7B optimizado que tienes descargado
+MODELO_LLM = "qwen2.5:3b-instruct"
 MODELO_EMBEDDING = "nomic-embed-text"
 
-# Hiperparámetros de Inferencia (Optimizados para tu servidor en Oracle Cloud de 12GB RAM)
+# Hiperparámetros de Inferencia (Modificables según los componentes de cada laptop)
 CONFIG_LLM = {
     "temperature": 0.0,         # Determinismo puro
     "request_timeout": 120.0,
     "additional_kwargs": {
-        "num_thread": 4,          # 🚀 Subido a 4 hilos para procesar más rápido en el CPU del servidor
-        "num_ctx": 2048,          # 🚀 Duplicado a 4096 para que recuerde más contexto y más reseñas a la vez
+        "num_thread": 2,          # Modificar según los núcleos disponibles (ej. 2, 4, 8)
+        "num_ctx": 4096,          # Límite de contexto en RAM
         "top_k": 1,               # Token más probable
         "top_p": 0.1,             # Recorte de probabilidad
         "repeat_penalty": 1.15
