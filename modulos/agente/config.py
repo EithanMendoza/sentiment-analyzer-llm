@@ -15,7 +15,7 @@ RUTA_DB = os.path.join("datos", "base_vectorial")
 COLECCION_DB = "reviews_analizadas"
 
 # Modelos de Ollama
-MODELO_LLM = "qwen2.5:7b"
+MODELO_LLM = "qwen2.5:3b-instruct"  # Modelo de lenguaje para inferencia
 MODELO_EMBEDDING = "nomic-embed-text"
 
 # Hiperparámetros de Inferencia (Modificables según los componentes de cada laptop)
