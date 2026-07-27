@@ -14,21 +14,54 @@ def guardar_resenas_masivas(asin: str, resenas: list):
     conn = obtener_conexion()
     c = conn.cursor()
     
-    # 1. Nos aseguramos de que la tabla exista con todas las columnas necesarias
+    # 1. Nos aseguramos de que la tabla exista con la estructura correcta (PK compuesta)
     c.execute('''
         CREATE TABLE IF NOT EXISTS resenas (
-            review_id TEXT PRIMARY KEY,
+            review_id TEXT,
             asin TEXT,
             author TEXT,
             title TEXT,
             body TEXT,
             rating INTEGER,
             fecha TEXT,
-            verified BOOLEAN
+            verified BOOLEAN,
+            PRIMARY KEY (review_id, asin)
         )
     ''')
 
-    # 2. Preparamos los datos en una lista de tuplas con las llaves flexibles
+    # 2. Migración one-time: si existe una tabla vieja con PK solo en review_id,
+    #    la reemplazamos por la de PK compuesta (review_id, asin).
+    #    Esto se ejecuta automáticamente en cualquier máquina (la tuya o la de
+    #    tus compañeros) la primera vez que corran el código actualizado.
+    c.execute("PRAGMA table_info(resenas)")
+    columnas_info = c.fetchall()
+    pk_columnas = [col[1] for col in columnas_info if col[5] > 0]  # col[5] = orden en la PK (>0 si es parte de ella)
+
+    if pk_columnas == ["review_id"]:
+        print("[MIGRACIÓN] Detectada PK antigua en 'resenas'. Migrando a PK compuesta (review_id, asin)...")
+        c.execute("ALTER TABLE resenas RENAME TO resenas_old")
+        c.execute('''
+            CREATE TABLE resenas (
+                review_id TEXT,
+                asin TEXT,
+                author TEXT,
+                title TEXT,
+                body TEXT,
+                rating INTEGER,
+                fecha TEXT,
+                verified BOOLEAN,
+                PRIMARY KEY (review_id, asin)
+            )
+        ''')
+        c.execute('''
+            INSERT OR IGNORE INTO resenas (review_id, asin, author, title, body, rating, fecha, verified)
+            SELECT review_id, asin, author, title, body, rating, fecha, verified FROM resenas_old
+        ''')
+        c.execute("DROP TABLE resenas_old")
+        conn.commit()
+        print("[MIGRACIÓN] Completada exitosamente.")
+
+    # 3. Preparamos los datos en una lista de tuplas con las llaves flexibles
     #    (soporta llaves en español 'autor'/'texto' y en inglés 'author'/'body')
     datos_a_insertar = []
     for r in resenas:
@@ -57,7 +90,8 @@ def guardar_resenas_masivas(asin: str, resenas: list):
         ))
         
     try:
-        # INSERT OR REPLACE actualiza la reseña si vuelve a ingresar con el mismo ID
+        # INSERT OR REPLACE actualiza la reseña si vuelve a ingresar con el mismo
+        # (review_id, asin) — ya no pisa reseñas de otros productos.
         c.executemany('''
             INSERT OR REPLACE INTO resenas 
             (review_id, asin, author, title, body, rating, fecha, verified)

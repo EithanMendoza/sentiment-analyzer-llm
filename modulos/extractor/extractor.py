@@ -1,4 +1,3 @@
-
 import json
 import os
 from datetime import datetime
@@ -25,12 +24,17 @@ class ExtractorEspecifico:
         print(f"\n[ÉXITO] Se extrajeron {len(nuevos_datos)} reseñas legítimas en bruto.")
         print(f"[INFO] Archivo generado con éxito en: '{self.archivo_salida}' ({len(datos_existentes)} elementos).")
 
-    def extraer(self, url: str, scrolls: int = 3):
+    def extraer(self, url: str, asin: str, scrolls: int = 3):
         """
         Lanza el navegador automatizado con paginación integrada y unificada 
         tanto para Amazon como para Mercado Libre usando Playwright.
+
+        'asin' es OBLIGATORIO: se usa para generar IDs de reseña únicos por
+        producto y evitar que las reseñas de un producto sobrescriban las
+        de otro en la base de datos (colisión de review_id).
         """
         print(f"\n🚀 Lanzando navegador automatizado para extracción específica...")
+        asin_limpio = str(asin).strip().upper()
         reseñas_raspadas = []
         ruta_perfil = os.path.join(os.getcwd(), "sesion_playwright")
 
@@ -212,7 +216,13 @@ class ExtractorEspecifico:
                     
                     for op in opiniones_lote:
                         reseñas_raspadas.append({
-                            "id": f"{plataforma}_{datetime.now().strftime('%M%S')}_{index_pagina}_{op['index']}",
+                            # 🚀 CORRECCIÓN: incluimos el ASIN en el id para garantizar
+                            # unicidad real entre productos distintos. Antes el id
+                            # solo dependía de minuto:segundo + índices de página/DOM,
+                            # que se reinician en cada scrapeo y colisionaban entre
+                            # productos distintos, provocando que INSERT OR REPLACE
+                            # sobrescribiera reseñas de otro producto.
+                            "id": f"{asin_limpio}_{plataforma}_{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{index_pagina}_{op['index']}",
                             "producto": op.get("producto", "Producto Desconocido"),
                             "autor": op["autor"],
                             "titulo_comentario": op["titulo_comentario"],
@@ -245,6 +255,7 @@ class ExtractorEspecifico:
 
 if __name__ == "__main__":
     url_test = input("Ingresa URL de prueba (Amazon/MercadoLibre): ").strip()
-    if url_test:
+    asin_test = input("Ingresa el ASIN del producto: ").strip()
+    if url_test and asin_test:
         ex = ExtractorEspecifico()
-        ex.extraer(url_test)
+        ex.extraer(url_test, asin_test)
