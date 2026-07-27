@@ -16,6 +16,9 @@ from modulos.base_datos.operaciones.auditoria import (
 )
 from modulos.base_datos.operaciones.productos import vaciar_productos_por_usuario
 from modulos.indexador.indexador import IndexadorRAG
+from modulos.base_datos.operaciones.reportes import generar_excel_resenas, generar_pdf_resumen_ejecutivo
+from fastapi.responses import StreamingResponse
+from modulos.seguridad.autenticacion import obtener_usuario_actual
 
 router = APIRouter()
 
@@ -96,3 +99,52 @@ async def limpiar_datos_perfil_usuario(request: Request):
             status_code=500,
             detail=f"Error interno al procesar la limpieza del perfil: {str(e)}"
         )
+    
+@router.post("/metricas/exportar-excel/{asin}")
+async def endpoint_exportar_excel(
+    asin: str,
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
+    """
+    Genera dinámicamente el libro de Excel con todas las opiniones 
+    del ASIN y lo envía al frontend como una descarga binaria.
+    """
+    try:
+        # Generamos el buffer binario en memoria
+        buffer_excel = generar_excel_resenas(asin=asin, usuario_id=usuario_id)
+        
+        # Retornamos el archivo con los headers adecuados de Excel
+        return StreamingResponse(
+            buffer_excel,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=Reporte_{asin.upper()}.xlsx"}
+        )
+        
+    except ValueError as ve:
+        # Error controlado si no hay opiniones
+        raise HTTPException(status_code=444, detail=str(ve))
+    except Exception as e:
+        print(f"[ERROR BACKEND EXCEL] Falló la generación del reporte: {e}")
+        raise HTTPException(status_code=500, detail="Error interno al construir el archivo Excel.")
+
+@router.post("/metricas/exportar-pdf/{asin}")
+async def endpoint_exportar_pdf(
+    asin: str,
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
+    """
+    Genera dinámicamente un resumen ejecutivo en PDF y lo transmite como binario.
+    """
+    try:
+        buffer_pdf = generar_pdf_resumen_ejecutivo(asin=asin, usuario_id=usuario_id)
+        
+        return StreamingResponse(
+            buffer_pdf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=Resumen_Ejecutivo_{asin.upper()}.pdf"}
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        print(f"[ERROR BACKEND PDF] {e}")
+    raise HTTPException(status_code=500, detail="Error interno al construir el documento PDF.")
