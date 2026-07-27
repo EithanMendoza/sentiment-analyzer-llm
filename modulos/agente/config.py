@@ -24,7 +24,7 @@ CONFIG_LLM = {
     "request_timeout": 120.0,
     "additional_kwargs": {
         "num_thread": 4,          # 🚀 Subido a 4 hilos para procesar más rápido en el CPU del servidor
-        "num_ctx": 4096,          # 🚀 Duplicado a 4096 para que recuerde más contexto y más reseñas a la vez
+        "num_ctx": 2048,          # 🚀 Duplicado a 4096 para que recuerde más contexto y más reseñas a la vez
         "top_k": 1,               # Token más probable
         "top_p": 0.1,             # Recorte de probabilidad
         "repeat_penalty": 1.15
