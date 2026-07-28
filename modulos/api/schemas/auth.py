@@ -15,6 +15,7 @@ class UsuarioRegistro(BaseModel):
     last_name: str
     email: EmailStr  # o simplemente str si no usas EmailStr
     password: str
+    captcha_token: str  # Captcha token para validación del frontend
 
 class Token(BaseModel):
     access_token: str

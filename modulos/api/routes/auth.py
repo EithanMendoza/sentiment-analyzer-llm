@@ -6,6 +6,7 @@ y para intercambiar credenciales válidas por un token JWT.
 """
 
 import asyncio
+import httpx
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 from fastapi.security import OAuth2PasswordRequestForm
@@ -37,6 +38,29 @@ router = APIRouter()
 # Se inicializa el limitador local para mapear por IP del cliente
 limiter = Limiter(key_func=get_remote_address)
 
+# CLAVE SECRETA DE PRUEBA PARA CLOUDFLARE TURNSTILE
+TURNSTILE_SECRET = "1x0000000000000000000000000000000AA"
+
+async def verificar_token_cloudflare(token: str) -> bool:
+    """
+    Envía el token a Cloudflare para verificar que fue generado por un humano.
+    """
+    url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+    payload = {
+        "secret": TURNSTILE_SECRET,
+        "response": token
+    }
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            respuesta = await client.post(url, data=payload, timeout=5.0)
+            datos = respuesta.json()
+            return datos.get("success", False)
+        except Exception as e:
+            print(f"[ERROR TURNSTILE]: {e}")
+            # Si Cloudflare está caído, asumimos falso por seguridad
+            return False
+
 
 @router.post("/registro", status_code=status.HTTP_201_CREATED)
 @limiter.limit("3/hour")
@@ -48,6 +72,15 @@ async def registrar_usuario(
     Recibe los datos del usuario, encripta la contraseña y guarda el registro en SQLite.
     Protegido contra ataques de automatización y creación de cuentas masivas (Máximo 3 por hora).
     """
+
+    # 1.VALIDACIÓN DEL CAPTCHA ANTES DE HACER CUALQUIER OTRA COSA
+    es_humano = await verificar_token_cloudflare(usuario.captcha_token)
+    if not es_humano:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Validación de seguridad fallida. Por favor, intenta de nuevo."
+        )
+    
     # Hasheamos la contraseña real con bcrypt
     hash_pw = obtener_hash_password(usuario.password)
     
