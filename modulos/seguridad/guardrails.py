@@ -9,19 +9,57 @@ import unicodedata
 # 1. Lista expandida y compilada en Regex para detectar patrones maliciosos de manera flexible
 # Detecta variaciones con espacios múltiples, caracteres intermedios y variaciones comunes de evasión.
 PATRONES_PROHIBIDOS = [
+    # 🎭 1. Inyecciones de Prompt y Cambio de Rol (Los que ya tenías + variaciones)
     r"ignora\s+(?:las\s+)?instrucciones",
     r"olvida\s+(?:las\s+)?instrucciones",
+    r"ignore\s+all\s+previous",  # Variante en inglés muy común
     r"revela\s+(?:tu\s+)?system\s*prompt",
     r"cual\s+es\s+tu\s+system\s*prompt",
     r"eres\s+un\s+desarrollador",
     r"asume\s+(?:el\s+)?rol\s+de",
+    r"actua\s+como",
+    r"danos\s+instrucciones\s+previas",
+    
+    # 🔓 2. Palabras clave de Evasión (Jailbreaks)
     r"\bbypass\b",
     r"\bsudo\b",
     r"\bsystem\s*:",
-    r"danos\s+instrucciones\s+previas",
-    r"actua\s+como",
     r"mode\s+developer",
-    r"jailbreak"
+    r"jailbreak",
+    r"desactiva\s+(?:tus\s+)?filtros",
+
+    # 🚨 3. NUEVOS: Ataques a Base de Datos (SQLi / Destrucción)
+    r"borrar\s+(?:la\s+)?base\s+de\s+datos",
+    r"elimina\s+(?:la\s+)?base\s+de\s+datos",
+    r"drop\s+table",
+    r"drop\s+database",
+    r"delete\s+from",
+    r"truncate\s+table",
+    r"update\s+usuarios\s+set",
+
+    # 💥 4. NUEVOS: Ejecución de Comandos de Sistema / Código
+    r"rm\s+-rf",
+    r"os\.system",
+    r"os\.remove",
+    r"import\s+os",
+    r"exec\("
+
+
+    # 🤬 5. NUEVOS: Insultos, toxicidad y lenguaje ofensivo
+    r"\bidiota\b",
+    r"\bestupido\b",
+    r"\best[úu]pida\b",
+    r"\bimb[ée]cil\b",
+    r"\bpendejo\b",
+    r"\bpendeja\b",
+    r"\bmierda\b",
+    r"\bputo\b",
+    r"\bputa\b",
+    r"\bcabr[óo]n\b",
+    r"\bchinga\w*",       # Atrapa variaciones como chinga, chingada, etc.
+    r"\bcallate\b",
+    r"\bc[áa]llate\b",
+    r"\bmaldit[oa]\b"
 ]
 
 # Compilamos las expresiones regulares con la bandera IGNORECASE para optimizar la velocidad de ejecución

@@ -7,8 +7,9 @@ Incluye soporte para paginación de resultados y limpieza selectiva de datos por
 """
 
 import asyncio
-# AGREGAMOS Request AQUÍ EN LAS IMPORTACIONES OFICIALES
-from fastapi import APIRouter, Query, HTTPException, Depends, Request
+import re
+from fastapi import APIRouter, Query, HTTPException, Depends, Request, status
+from fastapi.responses import StreamingResponse
 
 from modulos.base_datos.operaciones.auditoria import (
     obtener_ultima_metrica,
@@ -17,22 +18,37 @@ from modulos.base_datos.operaciones.auditoria import (
 from modulos.base_datos.operaciones.productos import vaciar_productos_por_usuario
 from modulos.indexador.indexador import IndexadorRAG
 from modulos.base_datos.operaciones.reportes import generar_excel_resenas, generar_pdf_resumen_ejecutivo
-from fastapi.responses import StreamingResponse
 from modulos.seguridad.autenticacion import obtener_usuario_actual
 
 router = APIRouter()
 
-@router.get("/metricas/ultima")
+def sanitizar_mensaje_error(mensaje: str) -> str:
+    """
+    Elimina tags, prefijos internos entre corchetes (ej. [FALLO], [MÉTRICA]) 
+    y referencias técnicas para exponer solo mensajes limpios y amigables al cliente.
+    """
+    if not mensaje:
+        return "No fue posible procesar la solicitud."
+    # Remueve patrones como [FALLO], [ERROR], [MÉTRICA DIRECTA]
+    mensaje_limpio = re.sub(r'\[.*?\]\s*', '', mensaje)
+    return mensaje_limpio.strip()
+
+
+@router.get("/metricas/ultima", status_code=status.HTTP_200_OK)
 async def consultar_ultima_auditoria():
     """Endpoint para obtener las métricas de la última consulta realizada."""
     resultado = await asyncio.to_thread(obtener_ultima_metrica)
     
     if not resultado:
-        raise HTTPException(status_code=404, detail="No hay registros de auditoría disponibles.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="No hay registros de auditoría disponibles."
+        )
         
     return resultado
 
-@router.get("/metricas")
+
+@router.get("/metricas", status_code=status.HTTP_200_OK)
 async def consultar_todas_auditorias(
     limit: int = Query(10, description="Cantidad de registros a devolver por página", ge=1, le=100),
     skip: int = Query(0, description="Cantidad de registros a saltar (offset)", ge=0)
@@ -44,7 +60,8 @@ async def consultar_todas_auditorias(
     resultados = await asyncio.to_thread(obtener_metricas_paginadas, limit, skip)
     return resultados
 
-@router.post("/metricas/limpiar-cache")
+
+@router.post("/metricas/limpiar-cache", status_code=status.HTTP_200_OK)
 async def limpiar_datos_perfil_usuario(
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
@@ -75,14 +92,15 @@ async def limpiar_datos_perfil_usuario(
     except HTTPException as he:
         raise he
     except Exception as e:
-        # Se registra el error detallado internamente en consola, pero no se expone al cliente.
+        # Se registra el error detallado internamente en consola, protegiendo la infraestructura de cara al cliente
         print(f"[ERROR CRÍTICO LIMPIAR CACHÉ]: {e}")
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno al procesar la limpieza del perfil."
         )
     
-@router.post("/metricas/exportar-excel/{asin}")
+
+@router.post("/metricas/exportar-excel/{asin}", status_code=status.HTTP_200_OK)
 async def endpoint_exportar_excel(
     asin: str,
     usuario_id: str = Depends(obtener_usuario_actual)
@@ -103,13 +121,18 @@ async def endpoint_exportar_excel(
         )
         
     except ValueError as ve:
-        # Error controlado si no hay opiniones
-        raise HTTPException(status_code=444, detail=str(ve))
+        # Sanitización de fugas de datos de error internos
+        mensaje_limpio = sanitizar_mensaje_error(str(ve))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=mensaje_limpio)
     except Exception as e:
         print(f"[ERROR BACKEND EXCEL] Falló la generación del reporte: {e}")
-        raise HTTPException(status_code=500, detail="Error interno al construir el archivo Excel.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail="Error interno al construir el archivo Excel."
+        )
 
-@router.post("/metricas/exportar-pdf/{asin}")
+
+@router.post("/metricas/exportar-pdf/{asin}", status_code=status.HTTP_200_OK)
 async def endpoint_exportar_pdf(
     asin: str,
     usuario_id: str = Depends(obtener_usuario_actual)
@@ -126,7 +149,12 @@ async def endpoint_exportar_pdf(
             headers={"Content-Disposition": f"attachment; filename=Resumen_Ejecutivo_{asin.upper()}.pdf"}
         )
     except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
+        # Sanitización del mensaje controlando excepciones de negocio
+        mensaje_limpio = sanitizar_mensaje_error(str(ve))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=mensaje_limpio)
     except Exception as e:
         print(f"[ERROR BACKEND PDF] {e}")
-    raise HTTPException(status_code=500, detail="Error interno al construir el documento PDF.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail="Error interno al construir el documento PDF."
+        )

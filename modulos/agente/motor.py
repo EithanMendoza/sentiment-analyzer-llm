@@ -107,29 +107,28 @@ class MotorAnaliticoLineal:
 
         # 3. ARMAMOS EL SÚPER-PROMPT MANUALMENTE (Optimizado para Qwen 3B)
         prompt_final = (
-            f"### ROL:\n"
-            f"Eres un analista experto de reseñas de comercio electrónico. Sé directo, conciso y profesional.\n\n"
-            
-            f"### CONTEXTO DEL PRODUCTO:\n"
-            f"- **Nombre Oficial:** {nombre_producto if nombre_producto else 'No disponible'}\n"
-            f"- **ASIN:** {asin_producto if asin_producto else 'No disponible'}\n"
-            f"- **Características Técnicas:**\n{caracteristicas if caracteristicas else 'No disponible'}\n\n"
-            
-            f"### OPINIONES DE CLIENTES RECUPERADAS:\n"
-            f"{contexto_opiniones if contexto_opiniones else 'No hay reseñas recuperadas para este contexto.'}\n\n"
-            
-            f"### REGLAS CRÍTICAS:\n"
-            f"1. **CERO CRUCE DE DATOS:** Cada bloque de reseña es independiente. No mezcles experiencias de distintos compradores.\n"
-            f"2. **ATRIBUCIÓN:** Si mencionas una opinión específica, di qué autor la escribió y con cuántas estrellas calificó.\n"
-            f"3. **NOMBRES VÁLIDOS:** Nombres como 'Cliente Amazon', 'Anónimo' o apodos deben usarse tal cual aparecen.\n"
-            f"4. **NO ASUMAS NADA:** Si los textos no mencionan un dato, está prohibido inventarlo.\n"
-            f"5. **CLÁUSULA DE ESCAPE:** Si la respuesta a la consulta no se encuentra en el contexto proporcionado, responde exactamente: 'No cuento con registros suficientes en las opiniones.'\n\n"
-            
-            f"### CONSULTA DEL USUARIO:\n"
-            f"{pregunta}\n\n"
-            f"### RESPUESTA:"
-        )
-
+    f"### SISTEMA\n"
+    f"Eres una IA experta en analizar reseñas. No eres humano.\n"
+    f"SALUDOS: Si el usuario solo saluda (ej. 'hola') o pregunta quién eres, responde EXACTAMENTE: "
+    f"'¡Hola! Soy el Asistente Experto en analisis de reseñas. ¿En qué te ayudo con este producto?' y DETENTE.\n\n"
+    
+    f"### DATOS DEL PRODUCTO\n"
+    f"- Nombre: {nombre_producto if nombre_producto else 'N/A'}\n"
+    f"- ASIN: {asin_producto if asin_producto else 'N/A'}\n"
+    f"- Ficha: {caracteristicas if caracteristicas else 'N/A'}\n"
+    f"- Opiniones: {contexto_opiniones if contexto_opiniones else 'N/A'}\n\n"
+    
+    f"### TAREA PRINCIPAL Y RESTRICCIONES (NO LAS MENCIONES EN TU RESPUESTA)\n"
+    f"- OBJETIVO: Tu prioridad es esforzarte en encontrar la respuesta a la consulta basándote en los DATOS DEL PRODUCTO.\n"
+    f"- VE AL GRANO: Responde directamente la duda. NO repitas estas reglas ni expliques tu proceso lógico.\n"
+    f"- CITA: Si mencionas una reseña, incluye el autor y sus estrellas.\n"
+    f"- NO INVENTES: Usa exclusivamente la información de los datos proporcionados.\n"
+    f"- ÚLTIMO RECURSO: ÚNICAMENTE si es absolutamente imposible responder porque la información no existe en los datos, di: 'No cuento con registros suficientes en las opiniones.'\n\n"
+    
+    f"### CONSULTA DEL USUARIO\n"
+    f"{pregunta}\n\n"
+    f"### RESPUESTA DIRECTA:\n"
+)
         # 4. STREAMING DIRECTO AL LLM (Ollama / Qwen)
         print("[MOTOR DEBUG] 🚀 Enviando el prompt final a Ollama via Settings.llm.astream_complete()...")
         print("="*60 + "\n")

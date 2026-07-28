@@ -5,6 +5,7 @@ Expone los endpoints para crear nuevos usuarios en la base de datos
 y para intercambiar credenciales válidas por un token JWT.
 """
 
+import os
 import asyncio
 import httpx
 from datetime import datetime, timezone
@@ -38,8 +39,10 @@ router = APIRouter()
 # Se inicializa el limitador local para mapear por IP del cliente
 limiter = Limiter(key_func=get_remote_address)
 
-# CLAVE SECRETA DE PRUEBA PARA CLOUDFLARE TURNSTILE
-TURNSTILE_SECRET = "1x0000000000000000000000000000000AA"
+# 🔐 CLAVE SECRETA DE CLOUDFLARE TURNSTILE
+# Se extrae de forma segura de las variables de entorno. 
+# Si no se encuentra, usa tu Secret Key real provista como fallback secundario.
+TURNSTILE_SECRET = os.getenv("TURNSTILE_SECRET_KEY", "0x4AAAAAAD_uOvS5o03zJR6vtBmyUwnomlE")
 
 async def verificar_token_cloudflare(token: str) -> bool:
     """
@@ -58,7 +61,7 @@ async def verificar_token_cloudflare(token: str) -> bool:
             return datos.get("success", False)
         except Exception as e:
             print(f"[ERROR TURNSTILE]: {e}")
-            # Si Cloudflare está caído, asumimos falso por seguridad
+            # Si Cloudflare está caído o hay un error de red, asumimos falso por seguridad
             return False
 
 
@@ -73,7 +76,7 @@ async def registrar_usuario(
     Protegido contra ataques de automatización y creación de cuentas masivas (Máximo 3 por hora).
     """
 
-    # 1.VALIDACIÓN DEL CAPTCHA ANTES DE HACER CUALQUIER OTRA COSA
+    # 1. VALIDACIÓN DEL CAPTCHA ANTES DE HACER CUALQUIER OTRA COSA
     es_humano = await verificar_token_cloudflare(usuario.captcha_token)
     if not es_humano:
         raise HTTPException(
