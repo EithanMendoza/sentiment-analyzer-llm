@@ -2,15 +2,21 @@ from fastapi import FastAPI, HTTPException, Depends
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 
+# --- INTEGRACIÓN DE RATE LIMITING (SLOWAPI) ---
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
 # Importamos el motor
 from modulos.agente.motor import MotorAnaliticoLineal
-
 from modulos.seguridad.autenticacion import obtener_usuario_actual
-
 from modulos.base_datos.tablas_setup import inicializar_base_datos
 
 # Importamos nuestro nuevo router modular
 from modulos.api.routes import chat, herramientas, metricas, auth, historial, scraping
+
+# Inicializamos el limitador de tasa usando la dirección IP del cliente
+limiter = Limiter(key_func=get_remote_address)
 
 async def ciclo_vida_api(app: FastAPI):
     """
@@ -47,6 +53,10 @@ app = FastAPI(
     version="1.0.0",
     lifespan=ciclo_vida_api
 )
+
+# Registramos el limitador y el manejador de excepciones de cuotas excedidas (HTTP 429)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -95,8 +105,6 @@ app.include_router(
     tags=["Métricas y Monitoreo"], 
     dependencies=guardia_global
 )
-
-
 
 
 # =====================================================================

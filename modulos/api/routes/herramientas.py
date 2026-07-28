@@ -4,15 +4,13 @@ Rutas para las métricas, diagnósticos y herramientas de exportación.
 import os
 import glob
 import asyncio
-from fastapi import APIRouter, HTTPException,Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Request
 from fastapi.responses import FileResponse
 from modulos.seguridad.autenticacion import obtener_usuario_actual
 
 # Importamos las herramientas lógicas (Actualizadas para SQLite)
 from modulos.base_datos.operaciones.herramientas import (
     obtener_diagnostico_sistema,
-    #listar_archivos_reportes,
-    #limpiar_cache_scraping,
     exportar_analisis_csv,
     calcular_promedio_estrellas,
     contar_sentimientos_totales,
@@ -23,71 +21,97 @@ from modulos.base_datos.operaciones.herramientas import (
 from modulos.base_datos.conexion import obtener_conexion
 from modulos.base_datos.operaciones.productos import obtener_producto
 
-# NOTA: La seguridad (Depends) y el prefijo (/api) ya se aplican en main.py
+# Importamos el Rate Limiter
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
+
 
 @router.get("/metricas/diagnostico")
-async def endpoint_diagnostico():
+@limiter.limit("10/minute")
+async def endpoint_diagnostico(
+    request: Request,
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
     """Devuelve el estado actual del servidor local."""
     resultado = await asyncio.to_thread(obtener_diagnostico_sistema)
     return {"estado": "ok", "mensaje": resultado}
 
-# =====================================================================
-# @router.get("/metricas/reportes")
-# async def endpoint_listar_reportes():
-#     """Lista todos los archivos generados en el servidor."""
-#     resultado = await asyncio.to_thread(listar_archivos_reportes)
-#     return {"estado": "ok", "mensaje": resultado}
-# 
-# @router.post("/metricas/limpiar-cache")
-# async def endpoint_limpiar_cache():
-#     """Purga los archivos temporales remanentes."""
-#     resultado = await asyncio.to_thread(limpiar_cache_scraping)
-#     if "[ERROR]" in resultado:
-#         raise HTTPException(status_code=500, detail=resultado)
-#     return {"estado": "ok", "mensaje": resultado}
 
 @router.post("/metricas/exportar-csv/{asin}")
-async def endpoint_exportar_csv(asin: str):
+@limiter.limit("5/minute")
+async def endpoint_exportar_csv(
+    request: Request,
+    asin: str,
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
     """Genera el archivo CSV para un ASIN específico y envía los bytes al frontend."""
-    resultado = await asyncio.to_thread(exportar_analisis_csv, asin)
+    asin_limpio = asin.strip().upper()
+    usuario_str = str(usuario_id).strip()
+
+    # 1. Verificar que el producto exista y le pertenezca al usuario
+    producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, usuario_str)
+    if not producto_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No se encontró el producto o no tienes permisos para exportar sus datos."
+        )
+
+    # 2. Exportar CSV pasándole AMBOS parámetros (asin y usuario_id)
+    resultado = await asyncio.to_thread(exportar_analisis_csv, asin_limpio, usuario_str)
     
-    if "[ERROR]" in resultado or "[FALLO]" in resultado:
-        raise HTTPException(status_code=400, detail=resultado)
+    # Sanitización de errores: No exponer tags internas al cliente
+    if isinstance(resultado, str) and ("[ERROR]" in resultado or "[FALLO]" in resultado or "No existen" in resultado):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="No fue posible exportar el análisis en formato CSV."
+        )
     
-    # Buscamos el CSV recién generado en el directorio de salida
-    rutas_posibles = glob.glob(f"datos/procesados/{asin}_*.csv")
+    # 3. Buscamos el CSV recién generado con el patrón que incluye el usuario_id
+    rutas_posibles = glob.glob(f"datos/procesados/{usuario_str}_{asin_limpio}_*.csv")
+    if not rutas_posibles:
+        # Respaldo de búsqueda por si el nombre no lleva prefijo de usuario
+        rutas_posibles = glob.glob(f"datos/procesados/*{asin_limpio}*.csv")
     
     if not rutas_posibles:
-        raise HTTPException(status_code=404, detail="Se generó el CSV pero no se pudo localizar en el servidor.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="El archivo CSV generado no fue localizado en el servidor."
+        )
     
-    # Obtenemos el archivo más nuevo
+    # Obtenemos el archivo más reciente
     archivo_reciente = max(rutas_posibles, key=os.path.getctime)
     
     return FileResponse(
         path=archivo_reciente, 
-        filename=f"Analisis_Resenas_{asin}.csv",
+        filename=f"Analisis_Resenas_{asin_limpio}.csv",
         media_type="text/csv"
     )
 
 @router.get("/metricas/resumen/{asin}")
+@limiter.limit("30/minute")
 async def endpoint_metricas_rapidas(
+    request: Request,
     asin: str, 
-    usuario_id: str = Depends(obtener_usuario_actual)  # <-- INYECTAMOS LA SEGURIDAD AQUÍ
+    usuario_id: str = Depends(obtener_usuario_actual)
 ):
     """
     Devuelve un resumen estadístico consultando la base de datos relacional,
     filtrando los datos de forma estricta por el usuario autenticado.
     """
-    
+    asin_limpio = asin.strip().upper()
+    usuario_str = str(usuario_id).strip()
+
     # 1. Ejecutamos los cálculos asíncronos pasándole el usuario_id a cada función
-    promedio = await asyncio.to_thread(calcular_promedio_estrellas, asin, usuario_id)
-    sentimientos = await asyncio.to_thread(contar_sentimientos_totales, asin, usuario_id)
-    critica = await asyncio.to_thread(obtener_reseña_mas_critica, asin, usuario_id)
+    promedio = await asyncio.to_thread(calcular_promedio_estrellas, asin_limpio, usuario_str)
+    sentimientos = await asyncio.to_thread(contar_sentimientos_totales, asin_limpio, usuario_str)
+    critica = await asyncio.to_thread(obtener_reseña_mas_critica, asin_limpio, usuario_str)
     
     # 2. Extraemos el nombre oficial garantizando que el producto le pertenezca a este usuario
-    producto_data = await asyncio.to_thread(obtener_producto, asin, usuario_id)
-    producto_nombre = producto_data["nombre"] if producto_data else f"Producto Desconocido ({asin})"
+    producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, usuario_str)
+    producto_nombre = producto_data["nombre"] if producto_data else f"Producto ({asin_limpio})"
 
     # 3. Retornamos todo listo y aislado para el Dashboard en React
     return {
@@ -97,18 +121,27 @@ async def endpoint_metricas_rapidas(
         "reseña_destacada": critica
     }
 
+
 @router.get("/metricas/ultima")
-async def obtener_ultima_metrica():
-    """Obtiene la última métrica de rendimiento de la IA desde la tabla de auditoría."""
+@limiter.limit("30/minute")
+async def obtener_ultima_metrica(
+    request: Request,
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
+    """Obtiene la última métrica de rendimiento de la IA del usuario autenticado desde auditoría."""
     try:
+        usuario_str = str(usuario_id).strip()
+
         def fetch_db():
             conn = obtener_conexion()
             c = conn.cursor()
             c.execute('''
                 SELECT user_prompt, ttft_ms, total_latency_ms, tokens_per_second 
-                FROM auditoria 
-                ORDER BY timestamp DESC LIMIT 1
-            ''')
+                FROM auditoria a
+                JOIN sesiones s ON a.session_id = s.id_sesion
+                WHERE s.usuario_id = ?
+                ORDER BY a.timestamp DESC LIMIT 1
+            ''', (usuario_str,))
             registro = c.fetchone()
             conn.close()
             return registro
@@ -116,7 +149,7 @@ async def obtener_ultima_metrica():
         registro = await asyncio.to_thread(fetch_db)
 
         if not registro:
-            raise HTTPException(status_code=404, detail="Sin registros de auditoría aún.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sin registros de auditoría disponibles.")
 
         return {
             "prompt": registro[0],
@@ -124,22 +157,36 @@ async def obtener_ultima_metrica():
             "total_latency_ms": registro[2],
             "tokens_per_second": registro[3]
         }
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[ERROR METRICAS ULTIMA]: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recuperar métricas de auditoría.")
+
 
 @router.get("/metricas/ultimo-asin")
-async def obtener_ultimo_asin():
-    """Devuelve el ASIN del último producto guardado en la base de datos."""
+@limiter.limit("30/minute")
+async def obtener_ultimo_asin(
+    request: Request,
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
+    """Devuelve el ASIN del último producto guardado por el usuario autenticado."""
+    usuario_str = str(usuario_id).strip()
+
     def fetch_ultimo():
         conn = obtener_conexion()
         c = conn.cursor()
-        # Usamos rowid para obtener el último insertado
-        c.execute('SELECT asin FROM productos ORDER BY rowid DESC LIMIT 1')
+        c.execute('''
+            SELECT asin FROM productos 
+            WHERE usuario_id = ? 
+            ORDER BY rowid DESC LIMIT 1
+        ''', (usuario_str,))
         fila = c.fetchone()
         conn.close()
         return fila[0] if fila else None
         
     ultimo_asin = await asyncio.to_thread(fetch_ultimo)
     if not ultimo_asin:
-        raise HTTPException(status_code=404, detail="No hay productos en la base de datos.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No se encontraron productos registrados para el usuario.")
+    
     return {"asin": ultimo_asin}

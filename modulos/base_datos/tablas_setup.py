@@ -88,6 +88,15 @@ def inicializar_base_datos():
         )
     ''')
 
+    # 7. TABLA: Lista Negra de Tokens JWT (Logout Seguro)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS jwt_blacklist (
+            token TEXT PRIMARY KEY,
+            expiracion TIMESTAMP NOT NULL,
+            añadido_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     conn.commit()
     conn.close()
     print("[DB] Esquema relacional SaaS inicializado correctamente.")

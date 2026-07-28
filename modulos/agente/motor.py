@@ -73,6 +73,7 @@ class MotorAnaliticoLineal:
             return MockStreamingResponse()
 
         # 2. BÚSQUEDA VECTORIAL PURA CON FILTRADO POR CONTEXTO (ASIN)
+        asin_normalizado = str(asin_producto).strip().upper() if asin_producto else None
         filtros = None
         if asin_producto:
             print(f"[MOTOR DEBUG] 🔍 Aplicando filtro de metadatos exacto para ASIN: '{asin_producto}'")

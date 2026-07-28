@@ -31,7 +31,8 @@ def exportar_analisis_csv(asin: str, usuario_id: str, nombre_archivo: str = "exp
     y las exporta a un CSV compatible con Excel.
     """
     os.makedirs(DIRECTORIO_SALIDA, exist_ok=True)
-    asin_limpio = str(asin).strip().upper()
+    # Validar/Sanitizar en la ruta o función:
+    asin_limpio = "".join([c for c in asin if c.isalnum()]).upper()
     uid_limpio = str(usuario_id).strip()
     
     conn = obtener_conexion()
@@ -43,7 +44,7 @@ def exportar_analisis_csv(asin: str, usuario_id: str, nombre_archivo: str = "exp
         SELECT r.review_id, r.author, r.title, r.body, r.rating 
         FROM resenas r
         JOIN productos p ON UPPER(TRIM(r.asin)) = UPPER(TRIM(p.asin))
-        WHERE UPPER(TRIM(r.asin)) = ? AND (p.usuario_id = ? OR p.usuario_id = 'usuario_default')
+        WHERE UPPER(TRIM(r.asin)) = ? AND p.usuario_id = ?
     ''', (asin_limpio, uid_limpio))
     
     datos = c.fetchall()
@@ -90,7 +91,7 @@ def calcular_promedio_estrellas(asin: str, usuario_id: str) -> str:
         SELECT AVG(r.rating), COUNT(r.review_id) 
         FROM resenas r
         JOIN productos p ON UPPER(TRIM(r.asin)) = UPPER(TRIM(p.asin))
-        WHERE UPPER(TRIM(r.asin)) = ? AND (p.usuario_id = ? OR p.usuario_id = 'usuario_default')
+        WHERE UPPER(TRIM(r.asin)) = ? AND p.usuario_id = ?
     ''', (asin_limpio, uid_limpio))
     
     resultado = c.fetchone()
@@ -121,7 +122,7 @@ def contar_sentimientos_totales(asin: str, usuario_id: str) -> str:
             COUNT(*) as total
         FROM resenas r
         JOIN productos p ON UPPER(TRIM(r.asin)) = UPPER(TRIM(p.asin))
-        WHERE UPPER(TRIM(r.asin)) = ? AND (p.usuario_id = ? OR p.usuario_id = 'usuario_default')
+        WHERE UPPER(TRIM(r.asin)) = ? AND p.usuario_id = ?
     ''', (asin_limpio, uid_limpio))
     
     res = c.fetchone()

@@ -6,28 +6,47 @@ y para intercambiar credenciales válidas por un token JWT.
 """
 
 import asyncio
-from fastapi import APIRouter, HTTPException, status, Depends
+from datetime import datetime, timezone
+from fastapi import APIRouter, HTTPException, status, Depends, Request
 from fastapi.security import OAuth2PasswordRequestForm
+from jose import jwt
 
-# 1. Importamos los esquemas de Pydantic
+# 1. Importamos la conexión de la base de datos
+from modulos.base_datos.conexion import obtener_conexion
+
+# 2. Importamos los esquemas de Pydantic
 from modulos.api.schemas.auth import UsuarioRegistro, Token
 
-# 2. Importamos las operaciones de base de datos
+# 3. Importamos las operaciones de base de datos
 from modulos.base_datos.operaciones.usuarios import crear_usuario, obtener_usuario_por_correo
 
-# 3. Importamos tus utilidades de seguridad reales
+# 4. Importamos utilidades de seguridad reales, esquema OAuth2 y Rate Limiting
 from modulos.seguridad.autenticacion import (
     obtener_hash_password,
     verificar_password,
-    crear_token_acceso
+    crear_token_acceso,
+    esquema_oauth2,
+    SECRET_KEY,
+    ALGORITHM
 )
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 router = APIRouter()
 
+# Se inicializa el limitador local para mapear por IP del cliente
+limiter = Limiter(key_func=get_remote_address)
+
+
 @router.post("/registro", status_code=status.HTTP_201_CREATED)
-async def registrar_usuario(usuario: UsuarioRegistro):
+@limiter.limit("3/hour")
+async def registrar_usuario(
+    request: Request,  # 👈 Requerido internamente por SlowAPI de forma transparente
+    usuario: UsuarioRegistro
+):
     """
     Recibe los datos del usuario, encripta la contraseña y guarda el registro en SQLite.
+    Protegido contra ataques de automatización y creación de cuentas masivas (Máximo 3 por hora).
     """
     # Hasheamos la contraseña real con bcrypt
     hash_pw = obtener_hash_password(usuario.contrasena)
@@ -48,10 +67,16 @@ async def registrar_usuario(usuario: UsuarioRegistro):
         )
     return {"mensaje": "Usuario creado exitosamente", "id": nuevo_id}
 
+
 @router.post("/login", response_model=Token)
-async def iniciar_sesion(credenciales: OAuth2PasswordRequestForm = Depends()):
+@limiter.limit("10/minute")
+async def iniciar_sesion(
+    request: Request,  # 👈 Requerido internamente por SlowAPI de forma transparente
+    credenciales: OAuth2PasswordRequestForm = Depends()
+):
     """
     Verifica las credenciales y devuelve un token JWT válido por 2 horas.
+    Protegido contra ataques de fuerza bruta basados en diccionario (Máximo 10 intentos por minuto).
     """
     # Buscamos al usuario por correo en la BD
     usuario_db = await asyncio.to_thread(obtener_usuario_por_correo, credenciales.username)
@@ -66,8 +91,6 @@ async def iniciar_sesion(credenciales: OAuth2PasswordRequestForm = Depends()):
     
     # Generamos el token JWT inyectando el ID del usuario como 'sub', junto con
     # los datos de perfil que el frontend necesita mostrar (nombre completo, correo).
-    # 🆕 Antes solo se mandaba 'sub'; el frontend ya intentaba leer 'username',
-    # 'nombre' y 'apellido' pero nunca llegaban en el token.
     token_jwt = crear_token_acceso(data={
         "sub": usuario_db["id"],
         "username": usuario_db["correo"],
@@ -76,3 +99,42 @@ async def iniciar_sesion(credenciales: OAuth2PasswordRequestForm = Depends()):
     })
     
     return {"access_token": token_jwt, "token_type": "bearer"}
+
+
+@router.post("/logout", status_code=status.HTTP_200_OK)
+@limiter.limit("10/minute")
+async def cerrar_sesion(
+    request: Request,
+    token: str = Depends(esquema_oauth2)
+):
+    """
+    Invalida el token JWT del usuario actual añadiéndolo a la lista negra en la BD.
+    Evita que tokens robados sigan siendo utilizables.
+    """
+    try:
+        # Extraemos la fecha de expiración real del token para optimizar la limpieza futura
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        exp_timestamp = payload.get("exp")
+        
+        if exp_timestamp:
+            expiracion = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            expiracion = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            
+        def revocar_token():
+            conn = obtener_conexion()
+            c = conn.cursor()
+            c.execute('''
+                INSERT OR IGNORE INTO jwt_blacklist (token, expiracion)
+                VALUES (?, ?)
+            ''', (str(token), expiracion))
+            conn.commit()
+            conn.close()
+
+        await asyncio.to_thread(revocar_token)
+        return {"status": "success", "mensaje": "Sesión cerrada exitosamente."}
+        
+    except Exception as e:
+        print(f"[ERROR LOGOUT ENDPOINT]: {e}")
+        # Retornamos éxito simulado para evitar confirmación de ataques por denegación de logs
+        return {"status": "success", "mensaje": "Sesión cerrada."}

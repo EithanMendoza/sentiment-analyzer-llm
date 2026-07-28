@@ -5,27 +5,57 @@ import sqlite3
 import uuid
 from modulos.base_datos.conexion import obtener_conexion
 
-def crear_sesion_si_no_existe(sesion_id: str, asin: str, usuario_id: str = "usuario_default", primer_mensaje: str = None):
-    """Verifica si la sesión existe. Si no, la crea con un título dinámico y la asocia al ASIN."""
+def crear_sesion_si_no_existe(sesion_id: str, asin: str, usuario_id: str, primer_mensaje: str = None):
+    """
+    Verifica si la sesión existe. Si no, la crea con un título dinámico 
+    asociado al usuario legítimo y al ASIN del producto.
+    """
+    conn = obtener_conexion()
+    c = conn.cursor()
+    try:
+        if primer_mensaje:
+            palabras = primer_mensaje.split()
+            titulo_chat = " ".join(palabras[:5]) + ("..." if len(palabras) > 5 else "")
+        else:
+            titulo_chat = f"Análisis de {asin}"
+        
+        # Insertamos la sesión vinculada al usuario autenticado (sin crear usuarios ficticios)
+        c.execute('''
+            INSERT OR IGNORE INTO sesiones (id, usuario_id, asin, titulo) 
+            VALUES (?, ?, ?, ?)
+        ''', (str(sesion_id), str(usuario_id), str(asin), titulo_chat))
+        
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"[ERROR DB] No se pudo crear o verificar la sesión {sesion_id}: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
+
+
+def crear_sesion(usuario_id: str, asin: str, titulo: str) -> str:
+    """
+    Crea una nueva sesión de chat de forma explícita generando un UUID único.
+    Devuelve el ID generado para que el frontend pueda redirigir al chat.
+    """
+    nuevo_id = str(uuid.uuid4())
     conn = obtener_conexion()
     c = conn.cursor()
     
-    # --- CORRECCIÓN AQUÍ: Agregamos nombre y apellido al INSERT ---
-    c.execute('''INSERT OR IGNORE INTO usuarios (id, nombre, apellido, correo, password_hash) 
-                 VALUES (?, ?, ?, ?, ?)''', (usuario_id, "Admin", "Test", "admin@test.com", "hash_falso"))
-    
-    if primer_mensaje:
-        palabras = primer_mensaje.split()
-        titulo_chat = " ".join(palabras[:5]) + ("..." if len(palabras) > 5 else "")
-    else:
-        titulo_chat = f"Análisis de {asin}"
-    
-    # --- NUEVO: Agregamos el asin al INSERT de la sesión ---
-    c.execute('''INSERT OR IGNORE INTO sesiones (id, usuario_id, asin, titulo) 
-                 VALUES (?, ?, ?, ?)''', (sesion_id, usuario_id, asin, titulo_chat))
-    
-    conn.commit()
-    conn.close()
+    try:
+        c.execute('''
+            INSERT INTO sesiones (id, usuario_id, asin, titulo) 
+            VALUES (?, ?, ?, ?)
+        ''', (nuevo_id, str(usuario_id), str(asin), titulo))
+        
+        conn.commit()
+        return nuevo_id
+    except sqlite3.Error as e:
+        print(f"[ERROR DB] No se pudo crear la sesión explícita: {e}")
+        conn.rollback()
+        return None
+    finally:
+        conn.close()
 
 def guardar_mensaje(sesion_id: str, rol: str, contenido: str, asin: str, usuario_id: str = "usuario_default"):
     """Inserta un nuevo mensaje e inicializa la sesión si es la primera vez."""
@@ -112,31 +142,6 @@ def obtener_detalles_sesion(sesion_id: str):
         return {"id": fila[0], "usuario_id": fila[1], "asin": fila[2], "titulo": fila[3], "creado_en": fila[4]}
     return None
 
-def crear_sesion(usuario_id: str, asin: str, titulo: str) -> str:
-    """
-    Crea una nueva sesión de chat de forma explícita generando un UUID único.
-    Devuelve el ID generado para que el frontend pueda redirigir al chat.
-    """
-    nuevo_id = str(uuid.uuid4())
-    conn = obtener_conexion()
-    c = conn.cursor()
-    
-    # Mantenemos tu lógica para asegurar que el usuario (o el default) exista
-    c.execute('''INSERT OR IGNORE INTO usuarios (id, nombre, apellido, correo, password_hash) 
-                 VALUES (?, ?, ?, ?, ?)''', (usuario_id, "Admin", "Test", "admin@test.com", "hash_falso"))
-    
-    try:
-        c.execute('''
-            INSERT INTO sesiones (id, usuario_id, asin, titulo) 
-            VALUES (?, ?, ?, ?)
-        ''', (nuevo_id, usuario_id, asin, titulo))
-        conn.commit()
-        return nuevo_id
-    except Exception as e:
-        print(f"[ERROR DB] No se pudo crear la sesión explícita: {e}")
-        return None
-    finally:
-        conn.close()
 
 def eliminar_todas_las_sesiones_del_usuario(usuario_id: str) -> bool:
     """

@@ -121,8 +121,8 @@ def obtener_producto(asin: str, usuario_id: str = None):
 def vaciar_productos_por_usuario(usuario_id: str):
     """
     ELIMINACIÓN ESTRICTA Y AISLADA:
-    Elimina de SQLite únicamente las reseñas y productos vinculados al id de este usuario,
-    así como posibles registros huérfanos generados en etapas de desarrollo tempranas.
+    Elimina de SQLite únicamente las reseñas y productos vinculados de forma estricta 
+    al ID del usuario en sesión, garantizando el aislamiento multiusuario.
     """
     conn = obtener_conexion()
     c = conn.cursor()
@@ -130,23 +130,25 @@ def vaciar_productos_por_usuario(usuario_id: str):
         # Aseguramos que la columna exista para evitar errores de sintaxis
         asegurar_columna_usuario(c)
         
-        # 1. Eliminamos primero las reseñas enlazadas a los productos del usuario u huérfanos
+        usuario_str = str(usuario_id)
+
+        # 1. Eliminamos primero las reseñas enlazadas ÚNICAMENTE a productos de este usuario
         c.execute('''
             DELETE FROM resenas 
             WHERE asin IN (
                 SELECT asin FROM productos 
-                WHERE usuario_id = ? OR usuario_id IS NULL OR usuario_id = 'desconocido'
+                WHERE usuario_id = ?
             )
-        ''', (str(usuario_id),))
+        ''', (usuario_str,))
         
-        # 2. Eliminamos los productos vinculados estrictamente al usuario u huérfanos
+        # 2. Eliminamos los productos vinculados estrictamente al usuario en sesión
         c.execute('''
             DELETE FROM productos 
-            WHERE usuario_id = ? OR usuario_id IS NULL OR usuario_id = 'desconocido'
-        ''', (str(usuario_id),))
+            WHERE usuario_id = ?
+        ''', (usuario_str,))
         
         conn.commit()
-        print(f"[SQLITE] Limpieza exitosa y aislada (incluyendo huérfanos) para el usuario: {usuario_id}")
+        print(f"[SQLITE] Limpieza exitosa y aislada completada para el usuario: {usuario_str}")
     except sqlite3.Error as e:
         print(f"[ERROR SQLITE] Falló al eliminar registros del usuario {usuario_id}: {e}")
         conn.rollback()

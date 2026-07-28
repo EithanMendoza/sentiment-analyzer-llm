@@ -69,59 +69,55 @@ class ControladorRAG:
     def procesar_nuevo_producto(self, asin: str, marketplace: str = "com.mx", usuario_id: str = "desconocido"):
         """
         Orquesta el flujo completo de scraping, almacenamiento relacional e indexación
-        vectorial amarrando estrictamente la información al usuario en sesión.
+        vectorial garantizando la correcta vinculación con ChromaDB y SQLite.
         """
-        print(f"\n[ORQUESTADOR] 1. Iniciando análisis completo para ASIN: {asin} (Usuario: {usuario_id})")
-        estados_tareas[asin] = "procesando"
+        asin_limpio = str(asin).strip().upper()
+        uid_limpio = str(usuario_id).strip()
+        print(f"\n[ORQUESTADOR] 1. Iniciando análisis completo para ASIN: {asin_limpio} (Usuario: {uid_limpio})")
+        estados_tareas[asin_limpio] = "procesando"
         
         try:
             # ==========================================
             # FASE 1: METADATOS OFICIALES (BeautifulSoup -> SQLite)
             # ==========================================
             print("[ORQUESTADOR] Fase 1: Extrayendo ficha técnica...")
-            datos_oficiales = self.extractor_oficial.obtener_ficha_tecnica(asin)
+            datos_oficiales = self.extractor_oficial.obtener_ficha_tecnica(asin_limpio)
             
-            # 🚀 CORRECCIÓN CLAVE: Pasamos el usuario_id para que no quede como 'desconocido'
             guardar_o_actualizar_producto(
-                asin=asin, 
-                nombre=datos_oficiales["nombre"], 
-                caracteristicas=datos_oficiales["caracteristicas"],
-                usuario_id=str(usuario_id)  # <-- Asegura el dueño en la base de datos
+                asin=asin_limpio, 
+                nombre=datos_oficiales.get("nombre", f"Producto ASIN: {asin_limpio}"), 
+                caracteristicas=datos_oficiales.get("caracteristicas", []),
+                usuario_id=uid_limpio
             )
             
             # ==========================================
             # FASE 2: RESEÑAS DE USUARIOS (Apify Cloud -> SQLite)
             # ==========================================
             print("[ORQUESTADOR] Fase 2: Extrayendo reseñas de clientes usando Apify...")
-            
-            # Llamamos a tu cliente de Apify pasándole el ASIN
-            datos_limpios = extraer_resenas_apify(asin=asin)
+            datos_limpios = extraer_resenas_apify(asin=asin_limpio, marketplace=marketplace)
             
             if not datos_limpios:
-                print(f"[ORQUESTADOR ERROR] No se obtuvieron reseñas de Apify para {asin}.")
-                estados_tareas[asin] = "error"
+                print(f"[ORQUESTADOR ERROR] No se obtuvieron reseñas de Apify para {asin_limpio}.")
+                estados_tareas[asin_limpio] = "error_sin_resenas"
                 return False
 
-            # Guardamos la copia de seguridad relacional
-            guardar_resenas_masivas(asin=asin, resenas=datos_limpios)
+            # Guardamos la copia de seguridad relacional en SQLite
+            guardar_resenas_masivas(asin=asin_limpio, resenas=datos_limpios)
 
             # ==========================================
             # FASE 3: INDEXACIÓN VECTORIAL (Transformación -> ChromaDB)
             # ==========================================
-            print(f"[ORQUESTADOR] Fase 3: Vectorizando {len(datos_limpios)} reseñas...")
+            print(f"[ORQUESTADOR] Fase 3: Vectorizando {len(datos_limpios)} reseñas en ChromaDB...")
+            datos_estructurados = self._adaptar_formato_para_llamaindex(datos_limpios, asin_limpio)
             
-            # Le pasamos el ASIN a la adaptación para que quede sellado en los vectores.
-            # NOTA: Si deseas aislar los vectores por usuario en LlamaIndex/ChromaDB,
-            # puedes pasar también el usuario_id dentro de esta función adaptadora.
-            datos_estructurados = self._adaptar_formato_para_llamaindex(datos_limpios, asin)
+            # 🚀 CORRECCIÓN CRÍTICA: Se envía usuario_id explícitamente a ChromaDB
+            self.indexador.construir_indice(datos_estructurados, usuario_id=uid_limpio)
             
-            self.indexador.construir_indice(datos_estructurados)
-            
-            print(f"[ORQUESTADOR ÉXITO] Pipeline finalizado correctamente para {asin} (Usuario: {usuario_id}).")
-            estados_tareas[asin] = "completado"
+            print(f"[ORQUESTADOR ÉXITO] Pipeline finalizado correctamente para {asin_limpio}.")
+            estados_tareas[asin_limpio] = "completado"
             return True
             
         except Exception as e:
-            print(f"[ORQUESTADOR ERROR CRÍTICO] Falló el proceso para {asin}: {e}")
-            estados_tareas[asin] = "error"
+            print(f"[ORQUESTADOR ERROR CRÍTICO] Falló el proceso para {asin_limpio}: {e}")
+            estados_tareas[asin_limpio] = "error"
             return False

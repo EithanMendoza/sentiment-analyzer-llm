@@ -1,11 +1,3 @@
-"""
-Rutas del motor de inferencia RAG.
-
-Expone el endpoint principal de consulta conectado a LlamaIndex/ChromaDB.
-Se encarga de procesar la entrada del usuario, generar la respuesta en 
-streaming, y delegar el guardado del historial y las métricas de rendimiento.
-"""
-
 import time
 import asyncio
 from fastapi import APIRouter, HTTPException, Request, Depends
@@ -14,25 +6,32 @@ from fastapi.responses import StreamingResponse
 # 1. Esquema
 from modulos.api.schemas.chat import PeticionMensaje
 
-# 2. Operaciones de base de datos (Añadimos obtener_detalles_sesion)
+# 2. Operaciones de base de datos
 from modulos.base_datos.operaciones.sesiones import guardar_mensaje, obtener_detalles_sesion
 from modulos.base_datos.operaciones.auditoria import guardar_registro_auditoria
 from modulos.base_datos.operaciones.productos import obtener_producto
 
-# 3. Guardia de seguridad
+# 3. Guardia de seguridad, Guardrails y Rate Limiting
 from modulos.seguridad.autenticacion import obtener_usuario_actual
+from modulos.seguridad.guardrails import validar_prompt_seguro
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
+
 
 @router.post("/consultar")
+@limiter.limit("20/minute")
 async def hacer_consulta(
     peticion: PeticionMensaje, 
-    request: Request,
+    request: Request,  # 👈 Utilizado tanto para SlowAPI como para extraer el estado del motor
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
     """
     Endpoint principal de inferencia RAG.
     Genera la respuesta en streaming, guarda el historial y registra métricas de rendimiento.
+    Protegido con un límite de 20 consultas por minuto.
     """
     # 1. Extraemos el motor RAG de la memoria global de FastAPI
     motor_ia = getattr(request.app.state, "motor_ia", None)
@@ -42,19 +41,33 @@ async def hacer_consulta(
     if not peticion.mensaje.strip():
         raise HTTPException(status_code=400, detail="La pregunta no puede estar vacía.")
 
+    # Validamos el prompt con los guardrails de seguridad (Anti Prompt Injection)
+    es_seguro, mensaje_error = validar_prompt_seguro(peticion.mensaje)
+    if not es_seguro:
+        raise HTTPException(status_code=400, detail=mensaje_error)
+
     if not peticion.id_sesion:
         raise HTTPException(status_code=400, detail="Se requiere un id_sesion válido para chatear sobre un producto.")
 
     session_id = peticion.id_sesion.strip()
+    usuario_str = str(usuario_id).strip()
 
-    # 2. RECUPERAMOS EL ASIN DE LA BASE DE DATOS (La pieza clave para la llave foránea)
+    # 2. RECUPERAMOS EL ASIN DE LA BASE DE DATOS Y VERIFICAMOS PROPIEDAD (Prevención IDOR)
     detalles_sesion = await asyncio.to_thread(obtener_detalles_sesion, session_id)
     if not detalles_sesion:
         raise HTTPException(status_code=404, detail="Sesión no encontrada. Asegúrate de que el producto haya sido analizado primero.")
     
+    # Validación estricta de propiedad de la sesión
+    id_dueno_sesion = detalles_sesion.get("usuario_id")
+    if id_dueno_sesion and str(id_dueno_sesion).strip() != usuario_str:
+        raise HTTPException(
+            status_code=403, 
+            detail="No tienes autorización para acceder a esta conversación."
+        )
+
     asin_real = detalles_sesion["asin"]
 
-    # --- NUEVA INTEGRACIÓN: Función para obtener datos del producto ---
+    # Obtener datos del producto
     datos_producto = await asyncio.to_thread(obtener_producto, asin_real)
 
     if datos_producto and datos_producto.get("caracteristicas"):
@@ -76,13 +89,13 @@ async def hacer_consulta(
         'user', 
         peticion.mensaje, 
         asin_real, 
-        usuario_id
+        usuario_str
     )
 
     try:
         # 4. Iniciar la consulta al motor RAG filtrando por ASIN
         tiempo_inicio = time.time()
-        respuesta_stream = await motor_ia.consultar( #Esperamos la llamada asíncrona
+        respuesta_stream = await motor_ia.consultar(
             pregunta=peticion.mensaje, 
             asin_producto=asin_real,
             nombre_producto=nombre_prod,
@@ -96,12 +109,10 @@ async def hacer_consulta(
             buffer_respuesta = ""
 
             try:
-                # respuesta_stream ahora es el generador directo de Ollama
                 async for chunk in respuesta_stream:
                     if tiempo_primer_token is None:
                         tiempo_primer_token = time.time()
                     
-                    # El texto viene dentro de la propiedad 'delta'
                     texto_fragmento = chunk.delta
                     
                     buffer_respuesta += texto_fragmento
@@ -109,7 +120,7 @@ async def hacer_consulta(
                     
                     yield texto_fragmento
                     
-                # 6. Al terminar, guardamos la respuesta de la IA en la BD con su ASIN
+                # 6. Al terminar, guardamos la respuesta de la IA en la BD
                 if buffer_respuesta.strip():
                     await asyncio.to_thread(
                         guardar_mensaje, 
@@ -117,7 +128,7 @@ async def hacer_consulta(
                         'assistant', 
                         buffer_respuesta, 
                         asin_real, 
-                        usuario_id
+                        usuario_str
                     )
                     
                     # 7. Calculamos las métricas para la tabla de auditoría
@@ -139,7 +150,8 @@ async def hacer_consulta(
                         tools_executed=[]
                     )
             except Exception as e:
-                yield f"\n[Error durante el streaming: {str(e)}]"
+                print(f"[ERROR STREAMING CHAT]: {e}")
+                yield "\n[Se produjo un error al procesar el resto de la respuesta.]"
                 
         # 8. Retornamos la respuesta enviando el ID de sesión en los headers
         return StreamingResponse(
@@ -148,5 +160,11 @@ async def hacer_consulta(
             headers={"X-Session-ID": session_id}
         )
 
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error durante la inferencia: {str(e)}")
+        print(f"[ERROR INFERENCIA CHAT]: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Error interno al procesar la inferencia de la consulta."
+        )

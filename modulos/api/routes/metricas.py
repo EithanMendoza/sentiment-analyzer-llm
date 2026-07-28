@@ -45,41 +45,22 @@ async def consultar_todas_auditorias(
     return resultados
 
 @router.post("/metricas/limpiar-cache")
-async def limpiar_datos_perfil_usuario(request: Request):
+async def limpiar_datos_perfil_usuario(
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
     """
     Endpoint que intercepta la acción de 'Borrar datos/Limpiar caché' del frontend.
     Elimina de manera estricta los productos, reseñas y vectores asociados
     ÚNICAMENTE al perfil del usuario autenticado.
     """
     try:
-        # 1. Validación del Header de Autenticación
-        auth_header = request.headers.get("Authorization")
-        if not auth_header:
-            raise HTTPException(status_code=401, detail="No se proporcionó token de autenticación.")
-            
-        token = auth_header.replace("Bearer ", "").strip()
-        
-        # 2. Decodificación directa con PyJWT (sin importar funciones de autenticacion.py)
-        import jwt
-        try:
-            # Decodificamos sin verificar la firma localmente sólo para leer los claims de sesión
-            payload = jwt.decode(token, options={"verify_signature": False})
-        except Exception as e_jwt:
-            print(f"[ERROR JWT]: No se pudo decodificar el token: {e_jwt}")
-            raise HTTPException(status_code=401, detail="Token inválido o malformado.")
-            
-        # Extraemos el ID soportando tanto 'sub' como 'id'
-        usuario_id = payload.get("sub") or payload.get("id")
-        if not usuario_id:
-            raise HTTPException(status_code=401, detail="El token no contiene un identificador de usuario válido.")
-            
         usuario_id = str(usuario_id)
         print(f"[DEBUG LIMPIEZA] Iniciando vaciado para el usuario: {usuario_id}")
 
-        # 3. Purgamos los datos en SQLite
+        # 1. Purgamos los datos en SQLite
         await asyncio.to_thread(vaciar_productos_por_usuario, usuario_id)
         
-        # 4. Purgamos ChromaDB de forma aislada
+        # 2. Purgamos ChromaDB de forma aislada
         try:
             indexador = IndexadorRAG()
             await asyncio.to_thread(indexador.eliminar_vectores_de_usuario, usuario_id)
@@ -94,10 +75,11 @@ async def limpiar_datos_perfil_usuario(request: Request):
     except HTTPException as he:
         raise he
     except Exception as e:
-        print(f"[ERROR CRÍTICO LIMPIAR CACHÉ]: {str(e)}")
+        # Se registra el error detallado internamente en consola, pero no se expone al cliente.
+        print(f"[ERROR CRÍTICO LIMPIAR CACHÉ]: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Error interno al procesar la limpieza del perfil: {str(e)}"
+            detail="Error interno al procesar la limpieza del perfil."
         )
     
 @router.post("/metricas/exportar-excel/{asin}")

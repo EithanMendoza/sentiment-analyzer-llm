@@ -1,24 +1,28 @@
 import os
 import re
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Depends
+import asyncio
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Depends, Request
 
 # 1. Esquema propio
 from modulos.api.schemas.scraping import SolicitudScraping
 
-# 2. Operaciones de Base de Datos
-from modulos.base_datos.operaciones.productos import (
-    obtener_producto, 
-    obtener_productos_por_usuario
-)
+# 2. Operaciones de Base de Datos y Conexión
+from modulos.base_datos.operaciones.productos import obtener_productos_por_usuario
+from modulos.base_datos.conexion import obtener_conexion
 
 # 3. Importamos el orquestador completo
 from modulos.orquestador import ControladorRAG, estados_tareas
 
-# 4. Guardia de seguridad
+# 4. Guardia de seguridad y Rate Limiting
 from modulos.seguridad.autenticacion import obtener_usuario_actual
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 router = APIRouter()
 orquestador = ControladorRAG()
+
+# Inicializamos el limitador de tasa local mapeando la IP del cliente remoto
+limiter = Limiter(key_func=get_remote_address)
 
 
 def extraer_asin_de_url(texto: str) -> str:
@@ -39,19 +43,22 @@ async def listar_productos(usuario_id: str = Depends(obtener_usuario_actual)):
     Devuelve ÚNICAMENTE los productos analizados por el usuario autenticado.
     El frontend lo usa en 'Chat nuevo' para no mezclar productos de perfiles diferentes.
     """
-    productos = obtener_productos_por_usuario(usuario_id)
+    productos = await asyncio.to_thread(obtener_productos_por_usuario, usuario_id)
     return {"productos": productos}
 
 
 @router.post("/scraper/iniciar", status_code=202)
+@limiter.limit("5/minute")
 async def iniciar_scraping(
+    request: Request,  # 👈 Requerido internamente por SlowAPI de forma transparente para el frontend
     solicitud: SolicitudScraping, 
     tareas_fondo: BackgroundTasks,
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
     """
-    Recibe la URL, extrae el ASIN, revisa si ya existe en SQLite para este usuario (Vía Rápida),
-    o lanza el scraping profundo en segundo plano amarrado al usuario_id.
+    Recibe la URL o ASIN, revisa si existen reseñas reales registradas para este usuario (Vía Rápida),
+    o lanza el scraping profundo y vectorización en segundo plano amarrado al usuario_id.
+    Protegido con límite de tasa a 5 ejecuciones por minuto.
     """
     asin = extraer_asin_de_url(solicitud.url_o_asin)
     if not asin:
@@ -60,13 +67,30 @@ async def iniciar_scraping(
             detail="No se pudo encontrar un ASIN válido en el enlace proporcionado."
         )
 
-    # === VÍA RÁPIDA: El producto ya fue analizado por este usuario ===
-    producto_existente = obtener_producto(asin, usuario_id=usuario_id)
-    if producto_existente:
+    asin_limpio = asin.upper()
+    usuario_str = str(usuario_id).strip()
+
+    # === VÍA RÁPIDA: Se valida aislamiento multiusuario estricto sin fallbacks compartidos ===
+    def verificar_resenas_existentes(asin_target: str, uid: str) -> bool:
+        conn = obtener_conexion()
+        c = conn.cursor()
+        c.execute('''
+            SELECT COUNT(*) FROM resenas r
+            JOIN productos p ON UPPER(TRIM(r.asin)) = UPPER(TRIM(p.asin))
+            WHERE UPPER(TRIM(r.asin)) = ? AND p.usuario_id = ?
+        ''', (asin_target, uid))
+        total = c.fetchone()[0]
+        conn.close()
+        return total > 0
+
+    tiene_resenas = await asyncio.to_thread(verificar_resenas_existentes, asin_limpio, usuario_str)
+
+    if tiene_resenas:
+        estados_tareas[asin_limpio] = "completado"
         return {
             "status": "listo",
-            "asin": asin,
-            "mensaje": "Producto recuperado de la base de datos local del usuario."
+            "asin": asin_limpio,
+            "mensaje": "Producto y reseñas cargados desde la base de datos local del usuario."
         }
 
     # === VÍA LENTA: Scraping Nuevo ===
@@ -78,28 +102,28 @@ async def iniciar_scraping(
         )
 
     # Solo bloqueamos si ese ASIN específico se está procesando actualmente
-    if estados_tareas.get(asin) == "procesando":
+    if estados_tareas.get(asin_limpio) == "procesando":
         return {
             "status": "procesando",
-            "asin": asin,
+            "asin": asin_limpio,
             "mensaje": "Este producto ya está siendo extraído activamente."
         }
 
-    # Marcamos explícitamente el estado como procesando
-    estados_tareas[asin] = "procesando"
+    # Marcamos el estado como procesando
+    estados_tareas[asin_limpio] = "procesando"
 
-    # Lanzamos el trabajo en background asignando el usuario_id
+    # Lanzamos el trabajo en background asignando el usuario_id legítimo
     tareas_fondo.add_task(
         orquestador.procesar_nuevo_producto, 
-        asin, 
+        asin_limpio, 
         solicitud.marketplace,
-        usuario_id
+        usuario_str
     )
 
     return {
         "status": "procesando",
-        "asin": asin,
-        "mensaje": f"Scraping y vectorización iniciados en segundo plano para el ASIN {asin}."
+        "asin": asin_limpio,
+        "mensaje": f"Scraping y vectorización iniciados en segundo plano para el ASIN {asin_limpio}."
     }
 
 
@@ -109,11 +133,21 @@ async def consultar_estado_scraping(
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
     """
-    Consulta el estado del proceso sin crear sesiones o historiales de chat automáticamente.
+    Consulta el estado del proceso devolviendo un mensaje amigable y descriptivo.
     """
-    estado_actual = estados_tareas.get(asin, "no_encontrado")
+    asin_limpio = asin.strip().upper()
+    estado_actual = estados_tareas.get(asin_limpio, "no_encontrado")
+    
+    mensajes_estado = {
+        "procesando": "Extrayendo ficha técnica y opiniones de Amazon...",
+        "completado": "El producto y las opiniones se han procesado exitosamente.",
+        "error_sin_resenas": "No se encontraron opiniones públicas para este producto.",
+        "error": "No se pudo completar el análisis del producto. Revisa el enlace o intenta más tarde.",
+        "no_encontrado": "El producto no está en cola de procesamiento."
+    }
     
     return {
-        "asin": asin,
-        "estado": estado_actual
+        "asin": asin_limpio,
+        "estado": estado_actual,
+        "mensaje": mensajes_estado.get(estado_actual, "Estado desconocido.")
     }
