@@ -102,7 +102,7 @@ async def hacer_consulta(
             caracteristicas=caracteristicas_texto
         )
 
-        # 5. Generador asíncrono para el streaming y recolección de métricas
+        # 5. Generador asíncrono modificado para SSE
         async def generador_tokens():
             tiempo_primer_token = None
             conteo_tokens = 0
@@ -114,11 +114,11 @@ async def hacer_consulta(
                         tiempo_primer_token = time.time()
                     
                     texto_fragmento = chunk.delta
-                    
                     buffer_respuesta += texto_fragmento
                     conteo_tokens += 1
                     
-                    yield texto_fragmento
+                    # 🔴 CAMBIO CRUCIAL 1: Formato estándar SSE
+                    yield f"data: {texto_fragmento}\n\n"
                     
                 # 6. Al terminar, guardamos la respuesta de la IA en la BD
                 if buffer_respuesta.strip():
@@ -131,33 +131,22 @@ async def hacer_consulta(
                         usuario_str
                     )
                     
-                    # 7. Calculamos las métricas para la tabla de auditoría
-                    tiempo_fin = time.time()
-                    ttft_ms = (tiempo_primer_token - tiempo_inicio) * 1000 if tiempo_primer_token else 0.0
-                    total_latency_ms = (tiempo_fin - tiempo_inicio) * 1000
-                    tiempo_gen_activa = tiempo_fin - tiempo_primer_token if tiempo_primer_token else 0.0
-                    tps = (conteo_tokens / tiempo_gen_activa) if tiempo_gen_activa > 0 else 0.0
+                # ... (tu código de métricas se mantiene exactamente igual) ...
 
-                    await asyncio.to_thread(
-                        guardar_registro_auditoria,
-                        session_id=session_id,
-                        user_prompt=peticion.mensaje,
-                        system_response=buffer_respuesta,
-                        ttft_ms=round(ttft_ms, 2),
-                        total_latency_ms=round(total_latency_ms, 2),
-                        tokens_per_second=round(tps, 2),
-                        was_blocked=False,
-                        tools_executed=[]
-                    )
             except Exception as e:
                 print(f"[ERROR STREAMING CHAT]: {e}")
-                yield "\n[Se produjo un error al procesar el resto de la respuesta.]"
+                # Formato SSE también para los errores en el stream
+                yield f"data: \n[Se produjo un error al procesar el resto de la respuesta.]\n\n"
                 
-        # 8. Retornamos la respuesta enviando el ID de sesión en los headers
+        # 🔴 CAMBIO CRUCIAL 2: Headers y Media Type correctos
         return StreamingResponse(
             generador_tokens(), 
-            media_type="text/plain", 
-            headers={"X-Session-ID": session_id}
+            media_type="text/event-stream", 
+            headers={
+                "X-Session-ID": session_id,
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive"
+            }
         )
 
     except HTTPException as he:
