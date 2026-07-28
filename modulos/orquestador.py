@@ -47,17 +47,16 @@ class ControladorRAG:
         """Traduce el JSON que devuelve Apify y le inyecta el ASIN en los metadatos."""
         datos_adaptados = []
         for item in datos_apify:
-            # Tolerancia: Busca 'review_id', si no está, busca 'id', si no, usa 'sin_id'
             id_seguro = item.get("review_id", item.get("id", "sin_id"))
             adaptado = {
                 "id": id_seguro,
+                "asin": asin, # <--- MUÉVELO AQUÍ (Nivel principal)
                 "autor": item.get("autor", "Anónimo"),
                 "estrellas": item.get("estrellas", 0),
                 "titulo_comentario": item.get("titulo_comentario", "Sin título"),
                 "texto": item.get("texto", ""),
                 "fuente": item.get("fuente", "Amazon vía Apify"),
                 "metadatos": {
-                    "asin": asin, # <--- CRUCIAL: Añadimos el ASIN a los metadatos de ChromaDB
                     "fecha_publicacion": item.get("fecha_publicacion", "Desconocida"),
                     "compra_verificada": item.get("compra_verificada", False),
                     "variante": item.get("variante", "")

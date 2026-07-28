@@ -55,7 +55,7 @@ class IndexadorRAG:
                     "sentimiento": str(metadatos_ia.get("sentimiento", "Neutral")),
                     "categoria": str(metadatos_ia.get("categoria", "General")),
                     "fecha": str(metadatos_ia.get("fecha_publicacion", "")),
-                    "asin": str(metadatos_ia.get("asin", "desconocido")),
+                    "asin": str(item.get("asin", "desconocido")),
                     # CAMBIO CLAVE: Guardamos obligatoriamente el usuario que indexa esta reseña
                     "usuario_id": str(usuario_id)
                 }

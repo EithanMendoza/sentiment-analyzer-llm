@@ -216,13 +216,8 @@ class ExtractorEspecifico:
                     
                     for op in opiniones_lote:
                         reseñas_raspadas.append({
-                            # 🚀 CORRECCIÓN: incluimos el ASIN en el id para garantizar
-                            # unicidad real entre productos distintos. Antes el id
-                            # solo dependía de minuto:segundo + índices de página/DOM,
-                            # que se reinician en cada scrapeo y colisionaban entre
-                            # productos distintos, provocando que INSERT OR REPLACE
-                            # sobrescribiera reseñas de otro producto.
                             "id": f"{asin_limpio}_{plataforma}_{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{index_pagina}_{op['index']}",
+                            "asin": asin_limpio,
                             "producto": op.get("producto", "Producto Desconocido"),
                             "autor": op["autor"],
                             "titulo_comentario": op["titulo_comentario"],

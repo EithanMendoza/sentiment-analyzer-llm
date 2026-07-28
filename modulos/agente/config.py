@@ -32,4 +32,4 @@ CONFIG_LLM = {
 }
 
 # Configuración del Motor RAG
-SIMILARITY_TOP_K = 3            # Fragmentos recuperados por consulta
+SIMILARITY_TOP_K = 20           # Fragmentos recuperados por consulta
