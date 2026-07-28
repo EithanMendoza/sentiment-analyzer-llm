@@ -54,17 +54,16 @@ class MotorAnaliticoLineal:
         print(f"  ├─ ASIN: {asin_producto}")
         print(f"  └─ Producto: {nombre_producto}")
 
-        # 1. FORZAMOS RE-LECTURA DINÁMICA DEL ÍNDICE DESDE EL DISCO
-        print("[MOTOR DEBUG] 🔄 Intentando recargar/actualizar el índice vectorial desde el almacén...")
-        try:
-            self.index = obtener_indice_vectorial()
-            if self.index:
-                print("[MOTOR DEBUG] ✅ Índice vectorial cargado/detectado exitosamente en memoria.")
-            else:
-                print("[MOTOR DEBUG] ⚠️ 'obtener_indice_vectorial()' devolvió None (la carpeta de vectores no existe o está vacía).")
-        except Exception as e:
-            self.index = None
-            print(f"[MOTOR ERROR] ❌ Falló la recarga del índice vectorial: {e}")
+        # 1. VERIFICAMOS SI EL ÍNDICE ESTÁ CARGADO
+        if self.index is None:
+            print("[MOTOR DEBUG] 🔄 El índice no está en memoria. Intentando cargarlo...")
+            try:
+                self.index = obtener_indice_vectorial()
+                if self.index:
+                    print("[MOTOR DEBUG] ✅ Índice vectorial cargado exitosamente.")
+            except Exception as e:
+                self.index = None
+                print(f"[MOTOR ERROR] ❌ Falló la recarga del índice vectorial: {e}")
             
         # Si definitivamente no hay índice en disco, devolvemos respuesta de arranque en frío
         if not self.index:
