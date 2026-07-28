@@ -8,13 +8,13 @@ Contiene:
 - Token: Estructura del token JWT de respuesta.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 class UsuarioRegistro(BaseModel):
-    nombre: str
-    apellido: str
-    correo: str
-    contrasena: str
+    first_name: str
+    last_name: str
+    email: EmailStr  # o simplemente str si no usas EmailStr
+    password: str
 
 class Token(BaseModel):
     access_token: str

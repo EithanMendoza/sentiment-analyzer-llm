@@ -49,14 +49,14 @@ async def registrar_usuario(
     Protegido contra ataques de automatización y creación de cuentas masivas (Máximo 3 por hora).
     """
     # Hasheamos la contraseña real con bcrypt
-    hash_pw = obtener_hash_password(usuario.contrasena)
+    hash_pw = obtener_hash_password(usuario.password)
     
     # Insertamos en la BD usando un hilo separado para no bloquear el servidor
     nuevo_id = await asyncio.to_thread(
         crear_usuario, 
-        usuario.nombre,
-        usuario.apellido,
-        usuario.correo, 
+        usuario.first_name,
+        usuario.last_name,
+        usuario.email, 
         hash_pw
     )
     
