@@ -11,6 +11,9 @@ import re
 from fastapi import APIRouter, Query, HTTPException, Depends, Request, status
 from fastapi.responses import StreamingResponse
 
+# 📥 Importamos el esquema directamente desde tu carpeta de esquemas
+from modulos.api.schemas.metricas import SolicitudLimpiezaCache
+
 from modulos.base_datos.operaciones.auditoria import (
     obtener_ultima_metrica,
     obtener_metricas_paginadas
@@ -85,16 +88,23 @@ async def consultar_todas_auditorias(
 
 @router.post("/metricas/limpiar-cache", status_code=status.HTTP_200_OK)
 async def limpiar_datos_perfil_usuario(
+    cuerpo: SolicitudLimpiezaCache,
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
     """
-    Endpoint que intercepta la acción de 'Borrar datos/Limpiar caché' del frontend.
-    Elimina de manera estricta los productos, reseñas y vectores asociados
-    ÚNICAMENTE al perfil del usuario autenticado.
+    Endpoint con validación de doble paso (M-03) para evitar borrados accidentales.
+    Requiere que confirmar_borrado sea true y la frase_confirmacion sea 'ELIMINAR'.
     """
+    # 🛡️ VALIDACIÓN DE DOBLE PASO (M-03)
+    if not cuerpo.confirmar_borrado or cuerpo.frase_confirmacion.strip().upper() != "ELIMINAR":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Validación de doble paso fallida. Debes confirmar explícitamente el borrado escribiendo 'ELIMINAR'."
+        )
+
     try:
         usuario_id = str(usuario_id)
-        print(f"[DEBUG LIMPIEZA] Iniciando vaciado para el usuario: {usuario_id}")
+        print(f"[DEBUG LIMPIEZA] Iniciando vaciado seguro para el usuario: {usuario_id}")
 
         # 1. Purgamos los datos en SQLite
         await asyncio.to_thread(vaciar_productos_por_usuario, usuario_id)
@@ -108,13 +118,12 @@ async def limpiar_datos_perfil_usuario(
 
         return {
             "status": "success",
-            "mensaje": "Los datos y la base vectorial de tu perfil han sido eliminados correctamente."
+            "mensaje": "Los datos y la base vectorial de tu perfil han sido eliminados correctamente mediante doble confirmación."
         }
 
     except HTTPException as he:
         raise he
     except Exception as e:
-        # Se registra el error detallado internamente en consola, protegiendo la infraestructura de cara al cliente
         print(f"[ERROR CRÍTICO LIMPIAR CACHÉ]: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -113,7 +113,7 @@ async def iniciar_sesion(
     """
     Verifica las credenciales y devuelve un token JWT válido por 2 horas.
     Protegido contra ataques de fuerza bruta.
-    Modificado (A-03): Unifica soporte para application/json y form-urlencoded.
+    Estandarizado (A-04): Utiliza estrictamente 'email' y 'password'.
     """
     
     # 1. Detectar el Content-Type para unificar JSON y Form-Urlencoded
@@ -122,31 +122,31 @@ async def iniciar_sesion(
     if "application/json" in content_type:
         try:
             cuerpo = await request.json()
-            # Aceptamos 'username' o 'correo', y 'password' o 'contrasena' para mayor flexibilidad
-            username = cuerpo.get("username") or cuerpo.get("correo") 
-            password = cuerpo.get("password") or cuerpo.get("contrasena")
+            # 🔄 A-04: Estandarizado estrictamente a 'email' y 'password'
+            email = cuerpo.get("email")
+            password = cuerpo.get("password")
         except Exception:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JSON inválido")
     else:
         # 2. Fallback al estándar OAuth2 (formulario tradicional)
         formulario = await request.form()
-        username = formulario.get("username")
+        email = formulario.get("username") or formulario.get("email")
         password = formulario.get("password")
         
-    if not username or not password:
+    if not email or not password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="Faltan credenciales (username y password son requeridos)"
+            detail="Faltan credenciales (email y password son requeridos)"
         )
 
-    # 👇 DEJAMOS LAS LÍNEAS TEMPORALES QUE YA TENÍAS 👇
+    # 👇 LÍNEAS TEMPORALES DE DEBUGEU DE IP 👇
     ip_cabecera = request.headers.get("X-Forwarded-For", "No existe")
     ip_detectada = request.client.host
     print(f"\n[DEBUG SEGURIDAD] X-Forwarded-For: {ip_cabecera} | IP Cliente (FastAPI): {ip_detectada}\n")
     # 👆 HASTA AQUÍ 👆
 
     # Buscamos al usuario por correo en la BD[cite: 6]
-    usuario_db = await asyncio.to_thread(obtener_usuario_por_correo, username)
+    usuario_db = await asyncio.to_thread(obtener_usuario_por_correo, email)
     
     # Verificamos que el usuario exista y que la contraseña coincida con el hash[cite: 6]
     if not usuario_db or not verificar_password(password, usuario_db["password_hash"]):
@@ -156,12 +156,12 @@ async def iniciar_sesion(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Generamos el token JWT inyectando el ID del usuario[cite: 6]
+    # Generamos el token JWT inyectando los campos estandarizados en inglés[cite: 6]
     token_jwt = crear_token_acceso(data={
         "sub": usuario_db["id"],
-        "username": usuario_db["correo"],
-        "nombre": usuario_db.get("nombre", ""),
-        "apellido": usuario_db.get("apellido", "")
+        "email": usuario_db["correo"],
+        "first_name": usuario_db.get("nombre", ""),
+        "last_name": usuario_db.get("apellido", "")
     })
     
     return {"access_token": token_jwt, "token_type": "bearer"}
