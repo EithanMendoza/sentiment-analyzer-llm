@@ -145,7 +145,8 @@ async def hacer_consulta(
             headers={
                 "X-Session-ID": session_id,
                 "Cache-Control": "no-cache",
-                "Connection": "keep-alive"
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
             }
         )
 

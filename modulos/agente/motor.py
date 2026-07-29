@@ -140,7 +140,7 @@ if __name__ == "__main__":
     async def prueba_local():
         motor = MotorAnaliticoLineal()
         print("\n--- PRUEBA DE VELOCIDAD Y CONTEXTO ---")
-        asin_ejemplo = "B0CYWFH5Y9"
+        asin_ejemplo = "B0C6BJ95SC"
         pregunta_usuario = "¿Qué tal sale en general este producto?"
         
         resultado = await motor.consultar(pregunta=pregunta_usuario, asin_producto=asin_ejemplo)
