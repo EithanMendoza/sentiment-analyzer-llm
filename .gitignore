@@ -17,6 +17,9 @@ datos/
 *.sqlite3
 *.json
 
+#Archivo de configuración de LLM
+modulos/agente/config.py
+
 # Archivos temporales de scraping y Playwright
 sesion_playwright/
 debug_amazon_*.html
