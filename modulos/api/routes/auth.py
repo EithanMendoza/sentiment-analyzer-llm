@@ -37,7 +37,8 @@ from slowapi.util import get_remote_address
 router = APIRouter()
 
 # Se inicializa el limitador local para mapear por IP del cliente
-limiter = Limiter(key_func=get_remote_address)
+REDIS_URL = os.getenv("REDIS_URL", "memory://")
+limiter = Limiter(key_func=get_remote_address, storage_uri=REDIS_URL)
 
 # 🔐 CLAVE SECRETA DE CLOUDFLARE TURNSTILE
 # Se extrae de forma segura de las variables de entorno. 
@@ -120,7 +121,7 @@ async def iniciar_sesion(
     ip_detectada = request.client.host
     print(f"\n[DEBUG SEGURIDAD] X-Forwarded-For: {ip_cabecera} | IP Cliente (FastAPI): {ip_detectada}\n")
     # 👆 HASTA AQUÍ 👆
-    
+
     # Buscamos al usuario por correo en la BD
     usuario_db = await asyncio.to_thread(obtener_usuario_por_correo, credenciales.username)
     

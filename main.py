@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, HTTPException, Depends
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,6 +53,15 @@ app = FastAPI(
     description="API modular con Streaming para consultar opiniones de productos.",
     version="1.0.0",
     lifespan=ciclo_vida_api
+)
+
+# Configuramos la URL de Redis. Render te dará una URL que empieza con redis:// o rediss://
+REDIS_URL = os.getenv("REDIS_URL", "memory://")
+
+# Inicializamos el limitador conectándolo a Redis
+limiter = Limiter(
+    key_func=get_remote_address, 
+    storage_uri=REDIS_URL
 )
 
 # Registramos el limitador y el manejador de excepciones de cuotas excedidas (HTTP 429)
