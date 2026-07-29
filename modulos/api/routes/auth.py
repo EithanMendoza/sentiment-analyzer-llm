@@ -105,15 +105,22 @@ async def registrar_usuario(
 
 
 @router.post("/login", response_model=Token)
-@limiter.limit("10/minute")
+@limiter.limit("5/minute")
 async def iniciar_sesion(
     request: Request,  # 👈 Requerido internamente por SlowAPI de forma transparente
     credenciales: OAuth2PasswordRequestForm = Depends()
 ):
     """
     Verifica las credenciales y devuelve un token JWT válido por 2 horas.
-    Protegido contra ataques de fuerza bruta basados en diccionario (Máximo 10 intentos por minuto).
+    Protegido contra ataques de fuerza bruta basados en diccionario (Máximo 5 intentos por minuto).
     """
+
+    # 👇 AGREGA ESTAS 3 LÍNEAS TEMPORALMENTE 👇
+    ip_cabecera = request.headers.get("X-Forwarded-For", "No existe")
+    ip_detectada = request.client.host
+    print(f"\n[DEBUG SEGURIDAD] X-Forwarded-For: {ip_cabecera} | IP Cliente (FastAPI): {ip_detectada}\n")
+    # 👆 HASTA AQUÍ 👆
+    
     # Buscamos al usuario por correo en la BD
     usuario_db = await asyncio.to_thread(obtener_usuario_por_correo, credenciales.username)
     

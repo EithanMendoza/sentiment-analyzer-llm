@@ -26,14 +26,26 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 def extraer_asin_de_url(texto: str) -> str:
-    """Extrae el ASIN (10 caracteres) de un enlace o texto plano."""
+    """Extrae el ASIN (10 caracteres) de un enlace o texto plano, previniendo SSRF."""
     texto = texto.strip()
+    
+    # 1. Caso A: Es un ASIN puro de 10 caracteres
     if len(texto) == 10 and texto.isalnum():
         return texto.upper()
     
+    # 2. Caso B: Es una URL. Aplicamos Whitelisting estricto para bloquear SSRF
+    # Solo permite protocolos seguros/estándar y dominios oficiales de Amazon (ej. amazon.com, amazon.es, amazon.com.mx)
+    patron_dominio_seguro = r'^https?://(?:[a-zA-Z0-9-]+\.)*amazon\.[a-z]{2,3}(?:\.[a-z]{2})?/'
+    
+    if not re.match(patron_dominio_seguro, texto):
+        # Si el dominio es una IP (como 169.254.x.x), localhost, o un dominio malicioso, se descarta aquí mismo
+        return None
+    
+    # 3. Extraemos el ASIN únicamente de URLs validadas
     match = re.search(r'/(?:dp|gp/product|product|customer-reviews|product-reviews)/([A-Z0-9]{10})', texto)
     if match:
         return match.group(1).upper()
+        
     return None
 
 
