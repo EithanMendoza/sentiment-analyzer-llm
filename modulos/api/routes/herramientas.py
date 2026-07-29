@@ -35,7 +35,21 @@ async def endpoint_diagnostico(
     request: Request,
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
-    """Devuelve el estado actual del servidor local."""
+    """
+    Devuelve el estado actual del servidor local.
+    Totalmente deshabilitado en entornos de producción por seguridad (A-02).
+    """
+
+    # Por defecto, asumimos producción por seguridad extrema si la variable no existe
+    entorno = os.getenv("ENVIRONMENT", "produccion").lower()
+    
+    if entorno in ["produccion", "production", "prod"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not Found" # Mensaje genérico e intencionalmente vago
+        )
+
+    # Solo se ejecuta si explicitly definimos ENVIRONMENT="desarrollo" en el .env local
     resultado = await asyncio.to_thread(obtener_diagnostico_sistema)
     return {"estado": "ok", "mensaje": resultado}
 
