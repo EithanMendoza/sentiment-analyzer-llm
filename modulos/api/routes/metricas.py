@@ -23,6 +23,13 @@ from modulos.indexador.indexador import IndexadorRAG
 from modulos.base_datos.operaciones.reportes import generar_excel_resenas, generar_pdf_resumen_ejecutivo
 from modulos.seguridad.autenticacion import obtener_usuario_actual
 
+from fastapi import Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+# Inicializamos en memoria RAM (perfecto para tu servidor en Oracle)
+limiter = Limiter(key_func=get_remote_address)
+
 router = APIRouter()
 
 def sanitizar_mensaje_error(mensaje: str) -> str:
@@ -38,7 +45,9 @@ def sanitizar_mensaje_error(mensaje: str) -> str:
 
 
 @router.get("/metricas/ultima", status_code=status.HTTP_200_OK)
+@limiter.limit("10/minute")  # Limita a 10 solicitudes por minuto por IP
 async def consultar_ultima_auditoria(
+    request: Request,
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
     """Endpoint para obtener las métricas de la última consulta realizada por el usuario."""
@@ -65,7 +74,9 @@ async def consultar_ultima_auditoria(
 
 
 @router.get("/metricas", status_code=status.HTTP_200_OK)
+@limiter.limit("10/minute")  # Limita a 10 solicitudes por minuto por IP
 async def consultar_todas_auditorias(
+    request: Request,
     limit: int = Query(10, description="Cantidad de registros a devolver por página", ge=1, le=100),
     skip: int = Query(0, description="Cantidad de registros a saltar (offset)", ge=0),
     usuario_id: str = Depends(obtener_usuario_actual) # Inyectamos la seguridad
@@ -87,7 +98,9 @@ async def consultar_todas_auditorias(
 
 
 @router.post("/metricas/limpiar-cache", status_code=status.HTTP_200_OK)
+@limiter.limit("2/minute")  # Limita a 2 solicitudes por minuto por IP
 async def limpiar_datos_perfil_usuario(
+    request: Request,
     cuerpo: SolicitudLimpiezaCache,
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
@@ -132,7 +145,9 @@ async def limpiar_datos_perfil_usuario(
     
 
 @router.post("/metricas/exportar-excel/{asin}", status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")  # Limita a 5 solicitudes por minuto por IP
 async def endpoint_exportar_excel(
+    request: Request,
     asin: str,
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
@@ -164,7 +179,9 @@ async def endpoint_exportar_excel(
 
 
 @router.post("/metricas/exportar-pdf/{asin}", status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")  # Limita a 5 solicitudes por minuto por IP
 async def endpoint_exportar_pdf(
+    request: Request,
     asin: str,
     usuario_id: str = Depends(obtener_usuario_actual)
 ):

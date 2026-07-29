@@ -30,7 +30,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 @router.get("/metricas/diagnostico")
-@limiter.limit("10/minute")
+@limiter.limit("5/minute")
 async def endpoint_diagnostico(
     request: Request,
     usuario_id: str = Depends(obtener_usuario_actual)
@@ -91,7 +91,7 @@ async def endpoint_exportar_csv(
     )
 
 @router.get("/metricas/resumen/{asin}")
-@limiter.limit("30/minute")
+@limiter.limit("5/minute")
 async def endpoint_metricas_rapidas(
     request: Request,
     asin: str, 
@@ -123,7 +123,7 @@ async def endpoint_metricas_rapidas(
 
 
 @router.get("/metricas/ultima")
-@limiter.limit("30/minute")
+@limiter.limit("5/minute")
 async def obtener_ultima_metrica(
     request: Request,
     usuario_id: str = Depends(obtener_usuario_actual)
@@ -165,7 +165,7 @@ async def obtener_ultima_metrica(
 
 
 @router.get("/metricas/ultimo-asin")
-@limiter.limit("30/minute")
+@limiter.limit("5/minute")
 async def obtener_ultimo_asin(
     request: Request,
     usuario_id: str = Depends(obtener_usuario_actual)

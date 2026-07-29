@@ -25,8 +25,14 @@ from modulos.base_datos.operaciones.productos import obtener_producto
 # Importamos el guardia que decodifica el JWT
 from modulos.seguridad.autenticacion import obtener_usuario_actual
 
-router = APIRouter()
+from fastapi import Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
+# Inicializamos en memoria RAM (perfecto para tu servidor en Oracle)
+limiter = Limiter(key_func=get_remote_address)
+
+router = APIRouter()
 
 class SolicitudCrearSesion(BaseModel):
     asin: str
@@ -34,7 +40,9 @@ class SolicitudCrearSesion(BaseModel):
 
 
 @router.post("/sesiones", status_code=status.HTTP_201_CREATED)
+@limiter.limit("5/minute")  # Limita a 5 solicitudes por minuto por IP
 async def crear_sesion_endpoint(
+    request: Request,
     solicitud: SolicitudCrearSesion,
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
@@ -57,7 +65,11 @@ async def crear_sesion_endpoint(
 
 
 @router.get("/sesiones")
-async def listar_sesiones(usuario_id: str = Depends(obtener_usuario_actual)):
+@limiter.limit("10/minute")  # Limita a 10 solicitudes por minuto por IP
+async def listar_sesiones(
+    request: Request,
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
     """
     Devuelve la lista de conversaciones (sesiones) pertenecientes al usuario autenticado.
     Ahora incluye automáticamente el campo 'asin' en cada sesión devuelta.
@@ -67,7 +79,12 @@ async def listar_sesiones(usuario_id: str = Depends(obtener_usuario_actual)):
 
 
 @router.get("/sesiones/{sesion_id}/mensajes")
-async def obtener_historial_chat(sesion_id: str, usuario_id: str = Depends(obtener_usuario_actual)):
+@limiter.limit("15/minute")  # Limita a 15 solicitudes por minuto por IP
+async def obtener_historial_chat(
+    request: Request,
+    sesion_id: str,
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
     """
     Devuelve todos los mensajes de una sesión específica, junto con los metadatos
     del producto (ASIN) para que el frontend pueda construir la interfaz gráfica.
@@ -95,7 +112,12 @@ async def obtener_historial_chat(sesion_id: str, usuario_id: str = Depends(obten
 
 
 @router.delete("/sesiones/{sesion_id}")
-async def borrar_conversacion(sesion_id: str, usuario_id: str = Depends(obtener_usuario_actual)):
+@limiter.limit("5/minute")  # Limita a 5 solicitudes por minuto por IP
+async def borrar_conversacion(
+    request: Request,
+    sesion_id: str,
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
     """
     Elimina una sesión y (por CASCADE en SQLite) todos sus mensajes asociados.
     """
@@ -110,7 +132,9 @@ async def borrar_conversacion(sesion_id: str, usuario_id: str = Depends(obtener_
     return {"estado": "ok", "mensaje": f"Sesión {sesion_id} eliminada correctamente."}
 
 @router.delete("/usuarios/{usuario_id}/historial/purgar")
+@limiter.limit("2/minute")  # Limita a 2 solicitudes por minuto por IP
 async def purgar_historial_usuario(
+    request: Request,
     usuario_id: str,
     usuario_autenticado: str = Depends(obtener_usuario_actual)
 ):

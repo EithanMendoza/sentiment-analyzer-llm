@@ -22,7 +22,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("/consultar")
-@limiter.limit("20/minute")
+@limiter.limit("10/minute")
 async def hacer_consulta(
     peticion: PeticionMensaje, 
     request: Request,  # 👈 Utilizado tanto para SlowAPI como para extraer el estado del motor

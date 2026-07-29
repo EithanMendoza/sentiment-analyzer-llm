@@ -67,14 +67,14 @@ async def verificar_token_cloudflare(token: str) -> bool:
 
 
 @router.post("/registro", status_code=status.HTTP_201_CREATED)
-@limiter.limit("3/hour")
+@limiter.limit("5/minute")  # Limita a 5 registros por minuto por IP
 async def registrar_usuario(
     request: Request,  # 👈 Requerido internamente por SlowAPI de forma transparente
     usuario: UsuarioRegistro
 ):
     """
     Recibe los datos del usuario, encripta la contraseña y guarda el registro en SQLite.
-    Protegido contra ataques de automatización y creación de cuentas masivas (Máximo 3 por hora).
+    Protegido contra ataques de automatización y creación de cuentas masivas (Máximo 5 por minuto).
     """
 
     # 1. VALIDACIÓN DEL CAPTCHA ANTES DE HACER CUALQUIER OTRA COSA
@@ -168,7 +168,7 @@ async def iniciar_sesion(
 
 
 @router.post("/logout", status_code=status.HTTP_200_OK)
-@limiter.limit("10/minute")
+@limiter.limit("5/minute")
 async def cerrar_sesion(
     request: Request,
     token: str = Depends(esquema_oauth2)

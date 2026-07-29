@@ -50,7 +50,11 @@ def extraer_asin_de_url(texto: str) -> str:
 
 
 @router.get("/productos")
-async def listar_productos(usuario_id: str = Depends(obtener_usuario_actual)):
+@limiter.limit("10/minute")  # Limita a 10 solicitudes por minuto por IP
+async def listar_productos(
+    request: Request,
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
     """
     Devuelve ÚNICAMENTE los productos analizados por el usuario autenticado.
     El frontend lo usa en 'Chat nuevo' para no mezclar productos de perfiles diferentes.
@@ -140,7 +144,9 @@ async def iniciar_scraping(
 
 
 @router.get("/scraper/estado/{asin}")
+@limiter.limit("10/minute")  # Limita a 10 solicitudes por minuto por IP
 async def consultar_estado_scraping(
+    request: Request,
     asin: str, 
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
