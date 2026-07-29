@@ -130,8 +130,31 @@ async def hacer_consulta(
                         asin_real, 
                         usuario_str
                     )
-                    
-                # ... (tu código de métricas se mantiene exactamente igual) ...
+
+                # 7. Calculamos y guardamos las métricas de rendimiento de esta consulta
+                tiempo_fin = time.time()
+                duracion_total_seg = tiempo_fin - tiempo_inicio
+
+                ttft_ms = (
+                    (tiempo_primer_token - tiempo_inicio) * 1000
+                    if tiempo_primer_token is not None else 0
+                )
+                total_latency_ms = duracion_total_seg * 1000
+                tokens_per_second = (
+                    conteo_tokens / duracion_total_seg if duracion_total_seg > 0 else 0
+                )
+
+                await asyncio.to_thread(
+                    guardar_registro_auditoria,
+                    session_id,
+                    peticion.mensaje,
+                    buffer_respuesta,
+                    ttft_ms,
+                    total_latency_ms,
+                    tokens_per_second,
+                    False,
+                    []
+                )
 
             except Exception as e:
                 print(f"[ERROR STREAMING CHAT]: {e}")

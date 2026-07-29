@@ -1,5 +1,7 @@
 import os
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -67,6 +69,25 @@ limiter = Limiter(
 # Registramos el limitador y el manejador de excepciones de cuotas excedidas (HTTP 429)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# 👇 NUEVO CÓDIGO (M-02): Manejador para ocultar el esquema de Pydantic en Producción 👇
+@app.exception_handler(RequestValidationError)
+async def ocultar_esquema_pydantic_handler(request: Request, exc: RequestValidationError):
+    # Detecta automáticamente si está en Render (producción) o si se forzó manualmente
+    es_produccion = os.getenv("RENDER") == "true" or os.getenv("ENTORNO", "").lower() in ["produccion", "production"]
+    
+    if es_produccion:
+        # En producción devolvemos un mensaje genérico
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "Datos de entrada inválidos. Verifica el formato de la solicitud."}
+        )
+    
+    # En desarrollo, devolvemos el error original
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": exc.body}
+    )
 
 app.add_middleware(
     CORSMiddleware,

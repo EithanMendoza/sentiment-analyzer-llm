@@ -35,29 +35,51 @@ def sanitizar_mensaje_error(mensaje: str) -> str:
 
 
 @router.get("/metricas/ultima", status_code=status.HTTP_200_OK)
-async def consultar_ultima_auditoria():
-    """Endpoint para obtener las métricas de la última consulta realizada."""
-    resultado = await asyncio.to_thread(obtener_ultima_metrica)
+async def consultar_ultima_auditoria(
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
+    """Endpoint para obtener las métricas de la última consulta realizada por el usuario."""
+    resultado = await asyncio.to_thread(obtener_ultima_metrica, usuario_id)
     
     if not resultado:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="No hay registros de auditoría disponibles."
-        )
-        
-    return resultado
+        # Valores por defecto para que el frontend no colapse
+        return {
+            "prompt": "Sin interacciones aún",
+            "ttft_ms": 0,
+            "total_latency_ms": 0,
+            "tokens_per_second": 0
+        }
+    
+    # Formateamos la respuesta EXACTAMENTE con las claves que espera React.
+    # Al hacer esto, también estamos omitiendo automáticamente el "session_id", 
+    # por lo que mantenemos la seguridad intacta.
+    return {
+        "prompt": resultado.get("user_prompt", "Sin prompt"),
+        "ttft_ms": resultado.get("ttft_ms", 0),
+        "total_latency_ms": resultado.get("total_latency_ms", 0),
+        "tokens_per_second": resultado.get("tokens_per_second", 0)
+    }
 
 
 @router.get("/metricas", status_code=status.HTTP_200_OK)
 async def consultar_todas_auditorias(
     limit: int = Query(10, description="Cantidad de registros a devolver por página", ge=1, le=100),
-    skip: int = Query(0, description="Cantidad de registros a saltar (offset)", ge=0)
+    skip: int = Query(0, description="Cantidad de registros a saltar (offset)", ge=0),
+    usuario_id: str = Depends(obtener_usuario_actual) # Inyectamos la seguridad
 ):
     """
     Endpoint para obtener el historial de consultas paginado.
-    Ideal para mostrar tablas de análisis de rendimiento en el frontend.
+    Filtra los resultados estrictamente por el usuario autenticado.
     """
-    resultados = await asyncio.to_thread(obtener_metricas_paginadas, limit, skip)
+    # Pasamos el usuario_id a la consulta de base de datos
+    resultados = await asyncio.to_thread(obtener_metricas_paginadas, limit, skip, usuario_id)
+    
+    # Filtramos los UUIDs (session_id) dentro de la clave 'datos' para evitar la vulnerabilidad B-02
+    if isinstance(resultados, dict) and "datos" in resultados:
+        for res in resultados["datos"]:
+            if isinstance(res, dict) and "session_id" in res:
+                del res["session_id"]
+
     return resultados
 
 

@@ -28,12 +28,22 @@ def guardar_registro_auditoria(
     conn.commit()
     conn.close()
 
-def obtener_ultima_metrica():
-    """Devuelve el registro más reciente de la tabla de auditoría."""
+def obtener_ultima_metrica(usuario_id: str):
+    """Devuelve el registro más reciente de la tabla de auditoría, filtrado por el usuario actual."""
     conn = obtener_conexion()
     c = conn.cursor()
-    # Usamos ORDER BY timestamp DESC para ordenar de más nuevo a más viejo y LIMIT 1
-    c.execute('SELECT * FROM auditoria ORDER BY timestamp DESC LIMIT 1')
+    
+    uid_limpio = str(usuario_id).strip()
+    
+    # Usamos TRIM() para eliminar espacios ocultos en los UUIDs que rompan la comparación
+    c.execute('''
+        SELECT a.* 
+        FROM auditoria a
+        JOIN sesiones s ON TRIM(a.session_id) = TRIM(s.id)
+        WHERE TRIM(s.usuario_id) = ?
+        ORDER BY a.timestamp DESC LIMIT 1
+    ''', (uid_limpio,))
+    
     fila = c.fetchone()
     conn.close()
     
@@ -47,17 +57,31 @@ def obtener_ultima_metrica():
         }
     return None
 
-def obtener_metricas_paginadas(limite: int = 10, salto: int = 0):
-    """Devuelve una lista de registros paginados y el total de elementos."""
+def obtener_metricas_paginadas(limite: int, salto: int, usuario_id: str):
+    """Devuelve una lista de registros paginados y el total de elementos, estrictamente del usuario actual."""
     conn = obtener_conexion()
     c = conn.cursor()
     
-    # 1. Obtener el total de registros para que el frontend pueda calcular las páginas
-    c.execute('SELECT COUNT(*) FROM auditoria')
+    uid_limpio = str(usuario_id).strip()
+    
+    # 1. Total de registros con TRIM
+    c.execute('''
+        SELECT COUNT(a.id) 
+        FROM auditoria a
+        JOIN sesiones s ON TRIM(a.session_id) = TRIM(s.id)
+        WHERE TRIM(s.usuario_id) = ?
+    ''', (uid_limpio,))
     total_registros = c.fetchone()[0]
     
-    # 2. Obtener los registros limitados usando OFFSET para saltar
-    c.execute('SELECT * FROM auditoria ORDER BY timestamp DESC LIMIT ? OFFSET ?', (limite, salto))
+    # 2. Búsqueda con TRIM
+    c.execute('''
+        SELECT a.* 
+        FROM auditoria a
+        JOIN sesiones s ON TRIM(a.session_id) = TRIM(s.id)
+        WHERE TRIM(s.usuario_id) = ?
+        ORDER BY a.timestamp DESC LIMIT ? OFFSET ?
+    ''', (uid_limpio, limite, salto))
+    
     filas = c.fetchall()
     conn.close()
     
