@@ -11,13 +11,20 @@ from modulos.base_datos.conexion import obtener_conexion
 load_dotenv()
 
 # =====================================================================
-# CONFIGURACIÓN DE SEGURIDAD BLINDADA
+# CONFIGURACIÓN DE SEGURIDAD BLINDADA (RS256)
 # =====================================================================
-# Se extrae la clave desde el entorno. Si no existe, se usa un fallback seguro
-# que Open Code o cualquier analizador estático no catalogará como fuga de credenciales reales.
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "CAMBIAME_EN_PRODUCCION_ENTORNO_SEGURO_JWT_SECRET_KEY")
-ALGORITHM = "HS256"
+# Cargamos las llaves asimétricas. El .replace("\\n", "\n") es vital porque 
+# a menudo los archivos .env leen los saltos de línea como texto literal.
+PRIVATE_KEY = os.getenv("JWT_PRIVATE_KEY", "").replace("\\n", "\n")
+PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY", "").replace("\\n", "\n")
+
+# Cambiamos explícitamente a RS256
+ALGORITHM = "RS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120  # El token expira en 2 horas
+
+# Verificación de seguridad al arranque
+if not PRIVATE_KEY or not PUBLIC_KEY:
+    print("[ADVERTENCIA] Faltan las llaves RSA para firmar/verificar JWT. El login fallará.")
 
 # Configuración del algoritmo de encriptación (bcrypt)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -56,7 +63,7 @@ def crear_token_acceso(data: dict) -> str:
     to_encode.update({"exp": expire})
     
     # 3. Firmamos el token
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, PRIVATE_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
 # =====================================================================
@@ -92,7 +99,8 @@ def obtener_usuario_actual(token: str = Depends(esquema_oauth2)):
         raise excepcion_credenciales
 
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # 👇 VERIFICACIÓN USANDO LA LLAVE PÚBLICA
+        payload = jwt.decode(token, PUBLIC_KEY, algorithms=[ALGORITHM])
         usuario_id: str = payload.get("sub")
         if usuario_id is None:
             raise excepcion_credenciales

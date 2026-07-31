@@ -16,6 +16,7 @@ datos/
 *.db
 *.sqlite3
 *.json
+*.pem
 
 #Archivo de configuración de LLM
 modulos/agente/config.py

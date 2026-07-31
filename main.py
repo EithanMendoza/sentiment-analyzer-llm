@@ -100,6 +100,12 @@ async def middleware_seguridad_global(request: Request, call_next):
         "img-src 'self' data: https://fastapi.tiangolo.com; "
         "frame-ancestors 'none';"
     )
+
+    # Mitigación REV-2026-06 (Fuga del header Server)
+    if "server" in response.headers:
+        del response.headers["server"]
+        
+    response.headers["Server"] = "Agente-API"
     
     return response
 

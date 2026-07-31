@@ -28,7 +28,7 @@ from modulos.seguridad.autenticacion import (
     verificar_password,
     crear_token_acceso,
     esquema_oauth2,
-    SECRET_KEY,
+    PUBLIC_KEY,
     ALGORITHM
 )
 from slowapi import Limiter
@@ -178,7 +178,7 @@ async def cerrar_sesion(
     """
     try:
         # Extraemos la fecha de expiración real del token para optimizar la limpieza futura
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, PUBLIC_KEY, algorithms=[ALGORITHM])
         exp_timestamp = payload.get("exp")
         
         if exp_timestamp:
