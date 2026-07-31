@@ -159,11 +159,20 @@ async def iniciar_sesion(
     # 👇 MITIGACIÓN PII APLICADA 👇
     # Generamos el token JWT inyectando ÚNICAMENTE el identificador.
     # Eliminamos por completo email, first_name y last_name del payload.
+    # Token JWT estrictamente blindado (solo lleva el identificador 'sub')
+    # Token JWT estrictamente blindado (solo lleva el identificador 'sub')
     token_jwt = crear_token_acceso(data={
         "sub": usuario_db["id"]
     })
     
-    return {"access_token": token_jwt, "token_type": "bearer"}
+    # Respuesta JSON limpia usando first_name y last_name para el frontend
+    return {
+        "access_token": token_jwt, 
+        "token_type": "bearer",
+        "first_name": usuario_db["nombre"],   # O usuario_db["first_name"] según tu tabla
+        "last_name": usuario_db["apellido"],  # O usuario_db["last_name"] según tu tabla
+        "email": usuario_db["correo"]         # O usuario_db["email"] según tu tabla
+    }
 
 
 @router.post("/logout", status_code=status.HTTP_200_OK)
