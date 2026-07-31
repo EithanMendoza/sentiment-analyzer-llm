@@ -91,7 +91,7 @@ async def hacer_consulta(
         session_id, 
         'user', 
         prompt_sanitizado,
-        peticion.mensaje, 
+    
         asin_real, 
         usuario_str
     )
