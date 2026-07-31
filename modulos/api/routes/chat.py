@@ -1,3 +1,4 @@
+import os # 👈 Importación necesaria para leer las variables de entorno
 import time
 import asyncio
 from fastapi import APIRouter, HTTPException, Request, Depends
@@ -18,20 +19,22 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
 
+# 👇 MITIGACIÓN APLICADA: Limitador conectado a Redis
+REDIS_URL = os.getenv("REDIS_URL", "memory://")
+limiter = Limiter(key_func=get_remote_address, storage_uri=REDIS_URL)
 
 @router.post("/consultar")
-@limiter.limit("10/minute")
+@limiter.limit("5/minute") # 👈 Límite estricto aplicado
 async def hacer_consulta(
     peticion: PeticionMensaje, 
-    request: Request,  # 👈 Utilizado tanto para SlowAPI como para extraer el estado del motor
+    request: Request,  
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
     """
     Endpoint principal de inferencia RAG.
     Genera la respuesta en streaming, guarda el historial y registra métricas de rendimiento.
-    Protegido con un límite de 20 consultas por minuto.
+    Protegido con un límite estricto de 5 consultas por minuto (Rate Limiting).
     """
     # 1. Extraemos el motor RAG de la memoria global de FastAPI
     motor_ia = getattr(request.app.state, "motor_ia", None)

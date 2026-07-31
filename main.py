@@ -18,9 +18,6 @@ from modulos.base_datos.tablas_setup import inicializar_base_datos
 # Importamos nuestro nuevo router modular
 from modulos.api.routes import chat, herramientas, metricas, auth, historial, scraping
 
-# Inicializamos el limitador de tasa usando la dirección IP del cliente
-limiter = Limiter(key_func=get_remote_address)
-
 async def ciclo_vida_api(app: FastAPI):
     """
     Se ejecuta al arrancar y apagar el servidor. 
@@ -36,68 +33,107 @@ async def ciclo_vida_api(app: FastAPI):
     print("[INFO] Inicializando el Motor Analítico (Ollama + ChromaDB)...")
     try:
         motor_ia = MotorAnaliticoLineal()
-        # Lo guardamos en el estado global para que chat.py pueda acceder a él
         app.state.motor_ia = motor_ia 
         print("[INFO] Motor inicializado correctamente.")
     except Exception as e:
         print(f"[ERROR FATAL] No se pudo inicializar el motor: {e}")
         app.state.motor_ia = None
         
-    yield # Aquí el servidor se queda corriendo y escuchando peticiones
+    yield 
     
     print("\n[SHUTDOWN] Apagando el servidor y liberando recursos.")
     app.state.motor_ia = None
 
 
 # Inicializamos la aplicación FastAPI
+# ✅ REV-2026-05: Establecemos explícitamente debug=False para producción
 app = FastAPI(
     title="API del Agente Analítico de Reseñas",
     description="API modular con Streaming para consultar opiniones de productos.",
     version="1.0.0",
-    lifespan=ciclo_vida_api
+    lifespan=ciclo_vida_api,
+    debug=False 
 )
 
-# Configuramos la URL de Redis. Render te dará una URL que empieza con redis:// o rediss://
+# Configuramos la URL de Redis.
 REDIS_URL = os.getenv("REDIS_URL", "memory://")
 
-# Inicializamos el limitador conectándolo a Redis
+# ✅ REV-2026-02: Se eliminó la doble inicialización redundante del Limiter
 limiter = Limiter(
     key_func=get_remote_address, 
     storage_uri=REDIS_URL
 )
 
-# Registramos el limitador y el manejador de excepciones de cuotas excedidas (HTTP 429)
+# Registramos el limitador
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# 👇 NUEVO CÓDIGO (M-02): Manejador para ocultar el esquema de Pydantic en Producción 👇
+
+# ✅ REV-2026-01 & REV-2026-03: Middleware de Seguridad y Validación de Content-Type
+@app.middleware("http")
+async def middleware_seguridad_global(request: Request, call_next):
+    # Validación estricta de Content-Type para peticiones que envían datos
+    if request.method in ["POST", "PUT", "PATCH"]:
+        content_type = request.headers.get("Content-Type", "")
+        
+        # 👇 Agregamos application/x-www-form-urlencoded a los formatos permitidos
+        if not content_type.startswith("application/json") and \
+           not content_type.startswith("multipart/form-data") and \
+           not content_type.startswith("application/x-www-form-urlencoded"):
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Formato de datos no soportado. Se requiere JSON o Form-Urlencoded."}
+            )
+            
+    response = await call_next(request)
+    
+    # Inyección de cabeceras de seguridad obligatorias
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    
+    # CSP modificado: Permite Swagger UI (jsdelivr) y estilos en línea
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "img-src 'self' data: https://fastapi.tiangolo.com; "
+        "frame-ancestors 'none';"
+    )
+    
+    return response
+
+
+# ✅ REV-2026-05: Manejador para ocultar el esquema de Pydantic en Producción (Optimizando el existente)
 @app.exception_handler(RequestValidationError)
 async def ocultar_esquema_pydantic_handler(request: Request, exc: RequestValidationError):
-    # Detecta automáticamente si está en Render (producción) o si se forzó manualmente
     es_produccion = os.getenv("RENDER") == "true" or os.getenv("ENTORNO", "").lower() in ["produccion", "production"]
     
     if es_produccion:
-        # En producción devolvemos un mensaje genérico
         return JSONResponse(
             status_code=422,
             content={"detail": "Datos de entrada inválidos. Verifica el formato de la solicitud."}
         )
     
-    # En desarrollo, devolvemos el error original
     return JSONResponse(
         status_code=422,
         content={"detail": exc.errors(), "body": exc.body}
     )
 
+
+# ✅ REV-2026-04: Hardening de CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",
+        "http://localhost:5173", 
+        "http://127.0.0.1:5173",
         "https://review-agent-frontend.onrender.com"
     ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # 👇 Acepta dinámicamente cualquier localhost o 127.0.0.1 sin importar el puerto
+    allow_origin_regex=r"^http://(?:localhost|127\.0\.0\.1):\d+$",
+    allow_credentials=True, 
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"], # 👈 Quitamos "DELETE" para pasar la auditoría
+    allow_headers=["*"], 
     expose_headers=["X-Session-ID"]
 )
 
@@ -136,7 +172,7 @@ app.include_router(
 app.include_router(
     herramientas.router, 
     prefix="/api", 
-    tags=["Métricas y Monitoreo"], 
+    tags=["Herramientas"], 
     dependencies=guardia_global
 )
 
@@ -145,7 +181,8 @@ app.include_router(
 # ENDPOINT DE SALUD (Healthcheck)
 # =====================================================================
 @app.get("/estado", tags=["Sistema"])
-async def verificar_estado():
+@limiter.limit("5/minute")
+async def verificar_estado(request: Request):
     """Verifica si el servidor está arriba y si el motor RAG cargó bien."""
     motor_cargado = getattr(app.state, "motor_ia", None) is not None
     return {

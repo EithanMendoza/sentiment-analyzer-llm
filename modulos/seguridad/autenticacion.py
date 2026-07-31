@@ -38,13 +38,24 @@ def verificar_password(plain_password: str, hashed_password: str) -> bool:
 # =====================================================================
 def crear_token_acceso(data: dict) -> str:
     """
-    Recibe un diccionario (generalmente con el 'sub': UUID_del_usuario) 
-    y devuelve un token JWT firmado y con tiempo de expiración.
+    Recibe un diccionario, extrae estrictamente el identificador y
+    devuelve un token JWT firmado, eliminando cualquier PII.
     """
-    to_encode = data.copy()
+    # 1. Extraemos SOLO el ID del usuario
+    usuario_id = data.get("sub")
+    
+    if not usuario_id:
+        raise ValueError("El identificador 'sub' es obligatorio para generar el token.")
+
+    # 🔒 MITIGACIÓN PII: Armamos un diccionario nuevo explícitamente.
+    # Cualquier otro dato como 'nombre', 'apellido' o 'email' será ignorado.
+    to_encode = {"sub": str(usuario_id)}
+    
+    # 2. Agregamos la expiración
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     
+    # 3. Firmamos el token
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 

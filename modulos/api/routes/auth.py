@@ -148,7 +148,7 @@ async def iniciar_sesion(
     # Buscamos al usuario por correo en la BD[cite: 6]
     usuario_db = await asyncio.to_thread(obtener_usuario_por_correo, email)
     
-    # Verificamos que el usuario exista y que la contraseña coincida con el hash[cite: 6]
+    # Verificamos que el usuario exista y que la contraseña coincida con el hash
     if not usuario_db or not verificar_password(password, usuario_db["password_hash"]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -156,12 +156,11 @@ async def iniciar_sesion(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Generamos el token JWT inyectando los campos estandarizados en inglés[cite: 6]
+    # 👇 MITIGACIÓN PII APLICADA 👇
+    # Generamos el token JWT inyectando ÚNICAMENTE el identificador.
+    # Eliminamos por completo email, first_name y last_name del payload.
     token_jwt = crear_token_acceso(data={
-        "sub": usuario_db["id"],
-        "email": usuario_db["correo"],
-        "first_name": usuario_db.get("nombre", ""),
-        "last_name": usuario_db.get("apellido", "")
+        "sub": usuario_db["id"]
     })
     
     return {"access_token": token_jwt, "token_type": "bearer"}
