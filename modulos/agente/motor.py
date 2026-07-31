@@ -6,6 +6,8 @@ mediante RAG manual y streaming asíncrono puro.
 """
 
 import asyncio
+
+import chromadb
 from .config import SIMILARITY_TOP_K
 from .modelos import configurar_modelos
 from .almacen import obtener_indice_vectorial
@@ -54,20 +56,23 @@ class MotorAnaliticoLineal:
         print(f"  ├─ ASIN: {asin_producto}")
         print(f"  └─ Producto: {nombre_producto}")
 
-        # 1. VERIFICAMOS SI EL ÍNDICE ESTÁ CARGADO
-        if self.index is None:
-            print("[MOTOR DEBUG] 🔄 El índice no está en memoria. Intentando cargarlo...")
-            try:
-                self.index = obtener_indice_vectorial()
-                if self.index:
-                    print("[MOTOR DEBUG] ✅ Índice vectorial cargado exitosamente.")
-            except Exception as e:
-                self.index = None
-                print(f"[MOTOR ERROR] ❌ Falló la recarga del índice vectorial: {e}")
+        # 1. SINCRONIZACIÓN DINÁMICA CON DISCO (Evita el 'Error finding id')
+        print("[MOTOR DEBUG] 🔄 Limpiando caché de ChromaDB y sincronizando con disco...")
+        try:
+            # 🚀 LA LÍNEA MÁGICA: Destruye el caché interno de la conexión vieja
+            chromadb.api.client.SharedSystemClient.clear_system_cache()
+            
+            # Ahora sí, al pedir el índice, Chroma estará obligado a leer el disco duro desde cero
+            self.index = obtener_indice_vectorial()
+            if self.index:
+                print("[MOTOR DEBUG] ✅ Índice vectorial recargado exitosamente.")
+        except Exception as e:
+            self.index = None
+            print(f"[MOTOR ERROR] ❌ Falló la recarga del índice vectorial: {e}")
             
         # Si definitivamente no hay índice en disco, devolvemos respuesta de arranque en frío
         if not self.index:
-            print("[MOTOR ALERT] 🧊 Sin índice vectorial disponible. Devolviendo 'MockStreamingResponse' (Arranque en frío).")
+            print("[MOTOR ALERT] 🧊 Sin índice vectorial disponible. Devolviendo 'MockStreamingResponse'.")
             print("="*60 + "\n")
             return MockStreamingResponse()
 

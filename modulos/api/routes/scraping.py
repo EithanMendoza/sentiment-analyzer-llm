@@ -1,7 +1,9 @@
+import json
 import os
 import re
 import asyncio
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Depends, Request
+from fastapi.responses import StreamingResponse
 
 # 1. Esquema propio
 from modulos.api.schemas.scraping import SolicitudScraping
@@ -143,19 +145,19 @@ async def iniciar_scraping(
     }
 
 
-@router.get("/scraper/estado/{asin}")
-@limiter.limit("10/minute")  # Limita a 10 solicitudes por minuto por IP
-async def consultar_estado_scraping(
+@router.get("/scraper/estado/stream/{asin}")
+@limiter.limit("10/minute")  # El límite sigue protegiendo la conexión inicial
+async def estado_scraping_sse(
     request: Request,
     asin: str, 
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
     """
-    Consulta el estado del proceso devolviendo un mensaje amigable y descriptivo.
+    Endpoint SSE que mantiene la conexión abierta y empuja actualizaciones 
+    de estado al frontend sin necesidad de que este haga polling repetitivo.
     """
     asin_limpio = asin.strip().upper()
-    estado_actual = estados_tareas.get(asin_limpio, "no_encontrado")
-    
+
     mensajes_estado = {
         "procesando": "Extrayendo ficha técnica y opiniones de Amazon...",
         "completado": "El producto y las opiniones se han procesado exitosamente.",
@@ -163,9 +165,45 @@ async def consultar_estado_scraping(
         "error": "No se pudo completar el análisis del producto. Revisa el enlace o intenta más tarde.",
         "no_encontrado": "El producto no está en cola de procesamiento."
     }
-    
-    return {
-        "asin": asin_limpio,
-        "estado": estado_actual,
-        "mensaje": mensajes_estado.get(estado_actual, "Estado desconocido.")
-    }
+
+    async def generador_estado():
+        estado_anterior = None
+
+        # Bucle que mantendrá la conexión viva hasta que termine o falle
+        while True:
+            # Si el cliente se desconecta (cierra la pestaña), detenemos el bucle
+            if await request.is_disconnected():
+                break
+
+            estado_actual = estados_tareas.get(asin_limpio, "no_encontrado")
+            
+            # Solo enviamos un evento si es la primera vez o si el estado cambió 
+            # (opcional, pero ahorra ancho de banda)
+            if estado_actual != estado_anterior:
+                respuesta = {
+                    "asin": asin_limpio,
+                    "estado": estado_actual,
+                    "mensaje": mensajes_estado.get(estado_actual, "Estado desconocido.")
+                }
+                
+                # Formato estándar SSE (enviamos JSON serializado)
+                yield f"data: {json.dumps(respuesta)}\n\n"
+                estado_anterior = estado_actual
+
+            # Si llegamos a un estado final, cerramos la transmisión de eventos rompiendo el bucle
+            if estado_actual in ["completado", "error", "error_sin_resenas", "no_encontrado"]:
+                break
+                
+            # Esperamos 2 segundos antes de volver a revisar la memoria del servidor.
+            # Esto NO genera nuevas peticiones HTTP, es solo una pausa interna en la función.
+            await asyncio.sleep(2)
+
+    return StreamingResponse(
+        generador_estado(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Crítico si usas Nginx o proxies para evitar retención de buffers
+        }
+    )
