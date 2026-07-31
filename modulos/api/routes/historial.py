@@ -51,17 +51,45 @@ async def crear_sesion_endpoint(
     Se usa desde 'Chat nuevo' cuando el usuario elige retomar un producto
     que ya fue analizado antes (aunque no tenga ningún chat activo todavía).
     """
-    titulo = solicitud.titulo
-    if not titulo:
-        producto = obtener_producto(solicitud.asin)
-        nombre = producto["nombre"] if producto else f"Producto {solicitud.asin}"
-        titulo = f"Análisis de {nombre[:25]}..."
+    try:
+        titulo = solicitud.titulo
+        
+        # 1. Validamos que el producto realmente exista en la BD antes de crear la sesión
+        if not titulo:
+            producto = obtener_producto(solicitud.asin)
+            
+            # Si el producto no existe, devolvemos un 404 controlado
+            if not producto:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, 
+                    detail="El ASIN proporcionado no existe en los registros."
+                )
+                
+            nombre = producto["nombre"]
+            titulo = f"Análisis de {nombre[:25]}..."
 
-    sesion_id = crear_sesion(usuario_id=usuario_id, asin=solicitud.asin, titulo=titulo)
-    if not sesion_id:
-        raise HTTPException(status_code=500, detail="No se pudo crear la sesión de chat.")
+        # 2. Intentamos crear la sesión
+        sesion_id = crear_sesion(usuario_id=usuario_id, asin=solicitud.asin, titulo=titulo)
+        
+        # Cambiamos el 500 por un 400 controlado para evitar fugas de información
+        if not sesion_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail="No se pudo crear la sesión. Verifica los datos enviados."
+            )
 
-    return {"id": sesion_id, "asin": solicitud.asin, "titulo": titulo}
+        return {"id": sesion_id, "asin": solicitud.asin, "titulo": titulo}
+
+    except HTTPException as he:
+        # Re-lanzamos las excepciones controladas que nosotros mismos definimos arriba (404, 400)
+        raise he
+    except Exception as e:
+        # 3. Atrapamos errores crudos (ej. caída de BD o form-urlencoded erróneo)
+        print(f"⚠️ [SEGURIDAD - ERROR INTERNO EN /sesiones] {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Error al procesar la solicitud. Formato inválido o error interno."
+        )
 
 
 @router.get("/sesiones")

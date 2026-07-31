@@ -122,17 +122,17 @@ def filtrado_semantico(prompt_limpio: str) -> tuple[bool, str]:
             
     return True, "OK"
 
-def validar_prompt_seguro(prompt_usuario: str) -> tuple[bool, str]:
+def validar_prompt_seguro(prompt_usuario: str) -> tuple[bool, str, str]:
     """
     Analiza el texto mediante normalización, expresiones regulares y análisis semántico.
-    Retorna (Es_Seguro, Mensaje_De_Bloqueo).
+    Retorna (Es_Seguro, Mensaje_De_Bloqueo_O_OK, Texto_Normalizado).
     """
     if not prompt_usuario:
-        return True, "OK"
+        return True, "OK", ""
 
     # 1. Validación de longitud (Prevención DoS)
     if len(prompt_usuario) > 1000:
-        return False, "La solicitud excede la longitud máxima permitida."
+        return False, "La solicitud excede la longitud máxima permitida.", ""
 
     # 2. Normalización de texto avanzada (Mitigación Evasión Unicode)
     prompt_limpio = normalizar_texto(prompt_usuario)
@@ -140,11 +140,11 @@ def validar_prompt_seguro(prompt_usuario: str) -> tuple[bool, str]:
     # 3. Fast-path: Búsqueda de patrones conocidos optimizada (Regex)
     for regex in REGEX_PROHIBIDOS:
         if regex.search(prompt_limpio):
-            return False, "La solicitud contiene términos o estructuras no permitidos."
+            return False, "La solicitud contiene términos o estructuras no permitidos.", ""
             
-    # 4. Deep-path: Análisis de intención semántica (Reemplaza las coincidencias exactas ciegas)
+    # 4. Deep-path: Análisis de intención semántica
     es_seguro, mensaje = filtrado_semantico(prompt_limpio)
     if not es_seguro:
-        return False, mensaje
+        return False, mensaje, ""
 
-    return True, "OK"
+    return True, "OK", prompt_limpio

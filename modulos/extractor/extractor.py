@@ -2,6 +2,7 @@ import json
 import os
 from datetime import datetime
 from playwright.sync_api import sync_playwright
+import urllib.parse
 
 class ExtractorEspecifico:
     # Modificamos la ruta para que apunte a la carpeta datos/
@@ -38,17 +39,30 @@ class ExtractorEspecifico:
         reseñas_raspadas = []
         ruta_perfil = os.path.join(os.getcwd(), "sesion_playwright")
 
-        # Detectar la plataforma según la URL
-        if "amazon" in url.lower():
-            plataforma = "amazon"
-            print("📦 Plataforma detectada de forma automática: AMAZON")
-        elif "mercadolibre" in url.lower():
-            plataforma = "mercadolibre"
-            print("💛 Plataforma detectada de forma automática: MERCADO LIBRE")
-        else:
-            print("⚠️ [ERROR] URL no soportada. Este extractor solo procesa Amazon y Mercado Libre.")
-            return
+      # Bloqueamos inmediatamente cualquier intento de usar el truco 'userinfo'
+        if "@" in url:
+            print("⚠️ [SEGURIDAD] La URL contiene caracteres no permitidos ('@'). Operación abortada.")
+            return []
+            
+        try:
+            # Parseamos la URL para extraer el dominio real al que se dirige
+            parsed_url = urllib.parse.urlparse(url)
+            hostname = parsed_url.hostname.lower() if parsed_url.hostname else ""
+        except Exception:
+            print("⚠️ [ERROR] URL malformada.")
+            return []
 
+        # En lugar de buscar si la palabra está "en la url", validamos el Hostname real
+        if "amazon." in hostname:
+            plataforma = "amazon"
+            print("📦 Plataforma validada de forma segura: AMAZON")
+        elif "mercadolibre." in hostname:
+            plataforma = "mercadolibre"
+            print("💛 Plataforma validada de forma segura: MERCADO LIBRE")
+        else:
+            print("⚠️ [ERROR] URL no soportada o dominio inválido. Solo se permite Amazon y Mercado Libre.")
+            return []
+        # 👆 FIN DEL CAMBIO 1 👆
         with sync_playwright() as p:
             context = p.chromium.launch_persistent_context(
                 user_data_dir=ruta_perfil,
@@ -219,7 +233,7 @@ class ExtractorEspecifico:
                             "id": f"{asin_limpio}_{plataforma}_{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{index_pagina}_{op['index']}",
                             "asin": asin_limpio,
                             "producto": op.get("producto", "Producto Desconocido"),
-                            "autor": op["autor"],
+                            "autor": "Comprador Anónimo",
                             "titulo_comentario": op["titulo_comentario"],
                             "texto": op["texto"],
                             "estrellas": op["estrellas"],

@@ -110,22 +110,17 @@ async def middleware_seguridad_global(request: Request, call_next):
     return response
 
 
-# ✅ REV-2026-05: Manejador para ocultar el esquema de Pydantic en Producción (Optimizando el existente)
+# ✅ REV-2026-05: Manejador estricto para ocultar el esquema de Pydantic
 @app.exception_handler(RequestValidationError)
 async def ocultar_esquema_pydantic_handler(request: Request, exc: RequestValidationError):
-    es_produccion = os.getenv("RENDER") == "true" or os.getenv("ENTORNO", "").lower() in ["produccion", "production"]
+    # 1. Mantenemos el log interno para que tú puedas ver el error real en tu consola/terminal
+    print(f"⚠️ [VALIACIÓN 422] Error de entrada en {request.url.path}: {exc.errors()}")
     
-    if es_produccion:
-        return JSONResponse(
-            status_code=422,
-            content={"detail": "Datos de entrada inválidos. Verifica el formato de la solicitud."}
-        )
-    
+    # 2. Devolvemos SIEMPRE una respuesta genérica al cliente (evita fugas de esquemas)
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors(), "body": exc.body}
+        content={"detail": "Datos de entrada inválidos. Verifica el formato de la solicitud."}
     )
-
 
 # ✅ REV-2026-04: Hardening de CORS
 app.add_middleware(

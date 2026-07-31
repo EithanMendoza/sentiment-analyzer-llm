@@ -45,7 +45,7 @@ async def hacer_consulta(
         raise HTTPException(status_code=400, detail="La pregunta no puede estar vacía.")
 
     # Validamos el prompt con los guardrails de seguridad (Anti Prompt Injection)
-    es_seguro, mensaje_error = validar_prompt_seguro(peticion.mensaje)
+    es_seguro, mensaje_error, prompt_sanitizado = validar_prompt_seguro(peticion.mensaje)
     if not es_seguro:
         raise HTTPException(status_code=400, detail=mensaje_error)
 
@@ -90,6 +90,7 @@ async def hacer_consulta(
         guardar_mensaje, 
         session_id, 
         'user', 
+        prompt_sanitizado,
         peticion.mensaje, 
         asin_real, 
         usuario_str
@@ -99,7 +100,7 @@ async def hacer_consulta(
         # 4. Iniciar la consulta al motor RAG filtrando por ASIN
         tiempo_inicio = time.time()
         respuesta_stream = await motor_ia.consultar(
-            pregunta=peticion.mensaje, 
+            pregunta=prompt_sanitizado, 
             asin_producto=asin_real,
             nombre_producto=nombre_prod,
             caracteristicas=caracteristicas_texto
