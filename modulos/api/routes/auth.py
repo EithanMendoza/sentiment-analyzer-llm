@@ -167,9 +167,7 @@ async def iniciar_sesion(
     
     # Respuesta JSON limpia usando first_name y last_name para el frontend
     # 1. Token JWT estrictamente blindado (Cumple con el Pentest: solo lleva el ID)
-    token_jwt = crear_token_acceso(data={
-        "sub": usuario_db["id"]
-    })
+   
     
     # 2. Respuesta JSON adaptada a las llaves reales de tu base de datos
     return {
