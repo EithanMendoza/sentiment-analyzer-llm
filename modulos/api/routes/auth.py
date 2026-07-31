@@ -169,9 +169,9 @@ async def iniciar_sesion(
     return {
         "access_token": token_jwt, 
         "token_type": "bearer",
-        "first_name": usuario_db["nombre"],   # O usuario_db["first_name"] según tu tabla
-        "last_name": usuario_db["apellido"],  # O usuario_db["last_name"] según tu tabla
-        "email": usuario_db["correo"]         # O usuario_db["email"] según tu tabla
+        "first_name": usuario_db["first_name"],   # O usuario_db["first_name"] según tu tabla
+        "last_name": usuario_db["last_name"],  # O usuario_db["last_name"] según tu tabla
+        "email": usuario_db["email"]         # O usuario_db["email"] según tu tabla
     }
 
 
