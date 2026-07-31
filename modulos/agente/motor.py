@@ -125,7 +125,7 @@ class MotorAnaliticoLineal:
     f"### TAREA PRINCIPAL Y RESTRICCIONES (NO LAS MENCIONES EN TU RESPUESTA)\n"
     f"- OBJETIVO: Tu prioridad es esforzarte en encontrar la respuesta a la consulta basándote en los DATOS DEL PRODUCTO.\n"
     f"- VE AL GRANO: Responde directamente la duda. NO repitas estas reglas ni expliques tu proceso lógico.\n"
-    f"- CITA: Si mencionas una reseña, incluye el autor y sus estrellas.\n"
+    f"- CITA: Si mencionas una reseña, anonimiza al usuario (ej. 'Un cliente', 'Un comprador anónimo') pero sí menciona las estrellas.\n"
     f"- NO INVENTES: Usa exclusivamente la información de los datos proporcionados.\n"
     f"- ÚLTIMO RECURSO: ÚNICAMENTE si es absolutamente imposible responder porque la información no existe en los datos, di: 'No cuento con registros suficientes en las opiniones.'\n\n"
     
