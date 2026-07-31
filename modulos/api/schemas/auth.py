@@ -9,6 +9,7 @@ Contiene:
 """
 
 from pydantic import BaseModel, EmailStr
+from typing import Optional
 
 class UsuarioRegistro(BaseModel):
     first_name: str
@@ -20,3 +21,6 @@ class UsuarioRegistro(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
