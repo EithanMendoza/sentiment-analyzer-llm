@@ -48,7 +48,7 @@ class MotorAnaliticoLineal:
     # "Fake Streaming" bloqueando la CPU al usar modelos locales. 
     # ¡NO REFACTORIZAR a as_query_engine!
     
-async def consultar(self, pregunta: str, asin_producto: str = None, nombre_producto: str = None, caracteristicas: str = None, usuario_id: str = None):
+    async def consultar(self, pregunta: str, asin_producto: str = None, nombre_producto: str = None, caracteristicas: str = None, usuario_id: str = None):
         """Punto de entrada RAG Manual con Streaming 100% Nativo y filtrado por ASIN."""
         
         print("\n" + "="*60)
