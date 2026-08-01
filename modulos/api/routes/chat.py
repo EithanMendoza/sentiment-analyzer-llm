@@ -165,7 +165,7 @@ async def hacer_consulta(
                 )
 
             except Exception as e:
-                print(f"[ERROR STREAMING CHAT]: {e}")
+                print(f"[ERROR STREAMING DEL CHAT]: {e}")
                 # Formato SSE también para los errores en el stream
                 yield f"data: \n[Se produjo un error al procesar el resto de la respuesta.]\n\n"
                 
