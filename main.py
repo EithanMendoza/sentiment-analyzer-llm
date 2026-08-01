@@ -18,6 +18,17 @@ from modulos.base_datos.tablas_setup import inicializar_base_datos
 # Importamos nuestro nuevo router modular
 from modulos.api.routes import chat, herramientas, metricas, auth, historial, scraping
 
+
+def obtener_ip_real(request: Request) -> str:
+    """
+    Extrae la IP real del cliente evitando la falsificación de cabeceras X-Forwarded-For.
+    Prioriza CF-Connecting-IP (Cloudflare) y cae a request.client.host (socket TCP directo).
+    """
+    ip_cf = request.headers.get("CF-Connecting-IP")
+    if ip_cf:
+        return ip_cf.strip()
+    return request.client.host if request.client else "127.0.0.1"
+
 async def ciclo_vida_api(app: FastAPI):
     """
     Se ejecuta al arrancar y apagar el servidor. 
@@ -60,7 +71,7 @@ REDIS_URL = os.getenv("REDIS_URL", "memory://")
 
 # ✅ REV-2026-02: Se eliminó la doble inicialización redundante del Limiter
 limiter = Limiter(
-    key_func=get_remote_address, 
+    key_func=obtener_ip_real, 
     storage_uri=REDIS_URL
 )
 

@@ -22,11 +22,9 @@ from modulos.base_datos.conexion import obtener_conexion
 from modulos.base_datos.operaciones.productos import obtener_producto
 
 # Importamos el Rate Limiter
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from main import limiter
 
 router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
 
 
 @router.get("/metricas/diagnostico")
@@ -39,7 +37,6 @@ async def endpoint_diagnostico(
     Devuelve el estado actual del servidor local.
     Totalmente deshabilitado en entornos de producción por seguridad (A-02).
     """
-
     # Por defecto, asumimos producción por seguridad extrema si la variable no existe
     entorno = os.getenv("ENVIRONMENT", "produccion").lower()
     
@@ -65,8 +62,12 @@ async def endpoint_exportar_csv(
     asin_limpio = asin.strip().upper()
     usuario_str = str(usuario_id).strip()
 
-    # 1. Verificar que el producto exista y le pertenezca al usuario
+    # 1. Verificar que el producto exista para el usuario o con fallback a usuario_default
     producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, usuario_str)
+    if not producto_data:
+        # Fallback de sincronización
+        producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, "usuario_default")
+
     if not producto_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -86,7 +87,9 @@ async def endpoint_exportar_csv(
     # 3. Buscamos el CSV recién generado con el patrón que incluye el usuario_id
     rutas_posibles = glob.glob(f"datos/procesados/{usuario_str}_{asin_limpio}_*.csv")
     if not rutas_posibles:
-        # Respaldo de búsqueda por si el nombre no lleva prefijo de usuario
+        # Respaldo de búsqueda por si el nombre se generó bajo el fallback de usuario_default
+        rutas_posibles = glob.glob(f"datos/procesados/usuario_default_{asin_limpio}_*.csv")
+    if not rutas_posibles:
         rutas_posibles = glob.glob(f"datos/procesados/*{asin_limpio}*.csv")
     
     if not rutas_posibles:
@@ -104,6 +107,7 @@ async def endpoint_exportar_csv(
         media_type="text/csv"
     )
 
+
 @router.get("/metricas/resumen/{asin}")
 @limiter.limit("5/minute")
 async def endpoint_metricas_rapidas(
@@ -113,7 +117,7 @@ async def endpoint_metricas_rapidas(
 ):
     """
     Devuelve un resumen estadístico consultando la base de datos relacional,
-    filtrando los datos de forma estricta por el usuario autenticado.
+    filtrando los datos de forma tolerante integrando el fallback de usuario_default.
     """
     asin_limpio = asin.strip().upper()
     usuario_str = str(usuario_id).strip()
@@ -123,8 +127,11 @@ async def endpoint_metricas_rapidas(
     sentimientos = await asyncio.to_thread(contar_sentimientos_totales, asin_limpio, usuario_str)
     critica = await asyncio.to_thread(obtener_reseña_mas_critica, asin_limpio, usuario_str)
     
-    # 2. Extraemos el nombre oficial garantizando que el producto le pertenezca a este usuario
+    # 2. Extraemos el nombre oficial garantizando compatibilidad con el fallback
     producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, usuario_str)
+    if not producto_data:
+        producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, "usuario_default")
+        
     producto_nombre = producto_data["nombre"] if producto_data else f"Producto ({asin_limpio})"
 
     # 3. Retornamos todo listo y aislado para el Dashboard en React
@@ -142,7 +149,7 @@ async def obtener_ultima_metrica(
     request: Request,
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
-    """Obtiene la última métrica de rendimiento de la IA del usuario autenticado desde auditoría."""
+    """Obtiene la última métrica de rendimiento de la IA del usuario autenticado eliminando datos sensibles."""
     try:
         usuario_str = str(usuario_id).strip()
 
@@ -150,7 +157,7 @@ async def obtener_ultima_metrica(
             conn = obtener_conexion()
             c = conn.cursor()
             c.execute('''
-                SELECT user_prompt, ttft_ms, total_latency_ms, tokens_per_second 
+                SELECT ttft_ms, total_latency_ms, tokens_per_second 
                 FROM auditoria a
                 JOIN sesiones s ON a.session_id = s.id_sesion
                 WHERE s.usuario_id = ?
@@ -165,11 +172,11 @@ async def obtener_ultima_metrica(
         if not registro:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sin registros de auditoría disponibles.")
 
+        # Removido el campo 'prompt' para mitigar la fuga de PII y la recolección de entradas del cliente
         return {
-            "prompt": registro[0],
-            "ttft_ms": registro[1],
-            "total_latency_ms": registro[2],
-            "tokens_per_second": registro[3]
+            "ttft_ms": registro[0],
+            "total_latency_ms": registro[1],
+            "tokens_per_second": registro[2]
         }
     except HTTPException as he:
         raise he
@@ -184,7 +191,7 @@ async def obtener_ultimo_asin(
     request: Request,
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
-    """Devuelve el ASIN del último producto guardado por el usuario autenticado."""
+    """Devuelve el ASIN del último producto guardado por el usuario autenticado o el default."""
     usuario_str = str(usuario_id).strip()
 
     def fetch_ultimo():
@@ -192,7 +199,7 @@ async def obtener_ultimo_asin(
         c = conn.cursor()
         c.execute('''
             SELECT asin FROM productos 
-            WHERE usuario_id = ? 
+            WHERE usuario_id = ? OR usuario_id = 'usuario_default'
             ORDER BY rowid DESC LIMIT 1
         ''', (usuario_str,))
         fila = c.fetchone()

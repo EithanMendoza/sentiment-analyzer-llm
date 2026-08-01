@@ -6,7 +6,6 @@ mediante RAG manual y streaming asíncrono puro.
 """
 
 import asyncio
-
 import chromadb
 from .config import SIMILARITY_TOP_K
 from .modelos import configurar_modelos
@@ -20,9 +19,12 @@ class MockChunk:
         self.delta = texto
 
 class MockStreamingResponse:
-    """Simula el formato de respuesta asíncrona de Ollama para arranques en frío."""
+    """Simula el formato de respuesta asíncrona de Ollama para arranques en frío o fallas."""
+    def __init__(self, mensaje="El motor aún no tiene datos. Por favor, procesa un enlace de Amazon primero."):
+        self.mensaje = mensaje
+
     async def __aiter__(self):
-        yield MockChunk("El motor aún no tiene datos. Por favor, procesa un enlace de Amazon primero.")
+        yield MockChunk(self.mensaje)
 
 class MotorAnaliticoLineal:
     """
@@ -37,11 +39,10 @@ class MotorAnaliticoLineal:
     def _intentar_cargar_motor(self):
         """Intenta conectarse a ChromaDB de forma segura y recarga si hay datos nuevos."""
         try:
-            # Forzamos una nueva lectura del almacén vectorial en disco
             self.index = obtener_indice_vectorial()
         except Exception as e:
             self.index = None
-            print("[INFO] Arranque en frío: No hay base vectorial aún. El motor esperará datos.")
+            print(f"[INFO] Arranque en frío: No hay base vectorial aún ({e}). El motor esperará datos.")
 
     # NOTA: Usamos RAG Manual y astream_complete porque as_query_engine() de LlamaIndex sufre de 
     # "Fake Streaming" bloqueando la CPU al usar modelos locales. 
@@ -56,16 +57,11 @@ class MotorAnaliticoLineal:
         print(f"  ├─ ASIN: {asin_producto}")
         print(f"  └─ Producto: {nombre_producto}")
 
-        # 1. SINCRONIZACIÓN DINÁMICA CON DISCO (Evita el 'Error finding id')
-        print("[MOTOR DEBUG] 🔄 Limpiando caché de ChromaDB y sincronizando con disco...")
+        # 1. SINCRONIZACIÓN Y OBTENCIÓN DEL ÍNDICE
         try:
-            # 🚀 LA LÍNEA MÁGICA: Destruye el caché interno de la conexión vieja
-            chromadb.api.client.SharedSystemClient.clear_system_cache()
-            
-            # Ahora sí, al pedir el índice, Chroma estará obligado a leer el disco duro desde cero
             self.index = obtener_indice_vectorial()
             if self.index:
-                print("[MOTOR DEBUG] ✅ Índice vectorial recargado exitosamente.")
+                print("[MOTOR DEBUG] ✅ Índice vectorial verificado y recargado exitosamente.")
         except Exception as e:
             self.index = None
             print(f"[MOTOR ERROR] ❌ Falló la recarga del índice vectorial: {e}")
@@ -77,29 +73,33 @@ class MotorAnaliticoLineal:
             return MockStreamingResponse()
 
         # 2. BÚSQUEDA VECTORIAL PURA CON FILTRADO POR CONTEXTO (ASIN)
-        asin_normalizado = str(asin_producto).strip().upper() if asin_producto else None
         filtros = None
         if asin_producto:
-            print(f"[MOTOR DEBUG] 🔍 Aplicando filtro de metadatos exacto para ASIN: '{asin_producto}'")
+            # ✅ CORRECCIÓN: Normalizamos el ASIN para que ChromaDB no falle por diferencias de mayúsculas/minúsculas
+            asin_normalizado = str(asin_producto).strip().upper()
+            print(f"[MOTOR DEBUG] 🔍 Aplicando filtro de metadatos exacto para ASIN: '{asin_normalizado}'")
             filtros = MetadataFilters(
-                filters=[ExactMatchFilter(key="asin", value=asin_producto)]
+                filters=[ExactMatchFilter(key="asin", value=asin_normalizado)]
             )
         else:
             print("[MOTOR DEBUG] ⚠️ No se proporcionó ASIN. Realizando búsqueda global sin filtros.")
 
-        retriever = self.index.as_retriever(
-            similarity_top_k=SIMILARITY_TOP_K,
-            filters=filtros
-        )
-        
-        print("[MOTOR DEBUG] 🛰️ Ejecutando retriever.aretrieve()...")
-        nodos = await retriever.aretrieve(pregunta)
-        print(f"[MOTOR DEBUG] 📦 Nodos recuperados con filtro: {len(nodos)}")
-        
-        # Extraemos solo el texto de las reseñas encontradas
-        contexto_opiniones = "\n\n".join([nodo.node.text for nodo in nodos])
-
-        print(f"[MOTOR DEBUG] 📝 Longitud total del texto de opiniones recuperado: {len(contexto_opiniones)} caracteres.")
+        try:
+            retriever = self.index.as_retriever(
+                similarity_top_k=SIMILARITY_TOP_K,
+                filters=filtros
+            )
+            
+            print("[MOTOR DEBUG] 🛰️ Ejecutando retriever.aretrieve()...")
+            nodos = await retriever.aretrieve(pregunta)
+            print(f"[MOTOR DEBUG] 📦 Nodos recuperados con filtro: {len(nodos)}")
+            
+            # Extraemos solo el texto de las reseñas encontradas
+            contexto_opiniones = "\n\n".join([nodo.node.text for nodo in nodos])
+            print(f"[MOTOR DEBUG] 📝 Longitud total del texto de opiniones recuperado: {len(contexto_opiniones)} caracteres.")
+        except Exception as e:
+            print(f"[MOTOR ERROR] ❌ Error durante la recuperación de nodos: {e}")
+            contexto_opiniones = ""
 
         # 3. ARMAMOS EL SÚPER-PROMPT MANUALMENTE (Optimizado para Qwen 3B)
         nombre_seguro = nombre_producto if nombre_producto else 'No especificado'
@@ -127,8 +127,12 @@ class MotorAnaliticoLineal:
         print("[MOTOR DEBUG] 🚀 Enviando el prompt final a Ollama via Settings.llm.astream_complete()...")
         print("="*60 + "\n")
         
-        generador_nativo = await Settings.llm.astream_complete(prompt_final)
-        return generador_nativo
+        try:
+            generador_nativo = await Settings.llm.astream_complete(prompt_final)
+            return generador_nativo
+        except Exception as e:
+            print(f"[MOTOR ERROR] ❌ Falló la generación en streaming: {e}")
+            return MockStreamingResponse("Ocurrió un error temporal al conectar con el modelo de lenguaje. Inténtalo nuevamente.")
 
 # Bloque de prueba local
 if __name__ == "__main__":

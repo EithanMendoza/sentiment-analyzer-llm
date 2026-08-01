@@ -15,14 +15,12 @@ from modulos.base_datos.operaciones.productos import obtener_producto
 # 3. Guardia de seguridad, Guardrails y Rate Limiting
 from modulos.seguridad.autenticacion import obtener_usuario_actual
 from modulos.seguridad.guardrails import validar_prompt_seguro
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from main import limiter
 
 router = APIRouter()
 
 # 👇 MITIGACIÓN APLICADA: Limitador conectado a Redis
-REDIS_URL = os.getenv("REDIS_URL", "memory://")
-limiter = Limiter(key_func=get_remote_address, storage_uri=REDIS_URL)
+
 
 @router.post("/consultar")
 @limiter.limit("5/minute") # 👈 Límite estricto aplicado

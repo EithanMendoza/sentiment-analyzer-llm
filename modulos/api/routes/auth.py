@@ -31,14 +31,13 @@ from modulos.seguridad.autenticacion import (
     PUBLIC_KEY,
     ALGORITHM
 )
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from main import limiter
 
 router = APIRouter()
 
 # Se inicializa el limitador local para mapear por IP del cliente
-REDIS_URL = os.getenv("REDIS_URL", "memory://")
-limiter = Limiter(key_func=get_remote_address, storage_uri=REDIS_URL)
+#REDIS_URL = os.getenv("REDIS_URL", "memory://")
+#limiter = Limiter(key_func=get_remote_address, storage_uri=REDIS_URL)
 
 # 🔐 CLAVE SECRETA DE CLOUDFLARE TURNSTILE
 # Se extrae de forma segura de las variables de entorno. 

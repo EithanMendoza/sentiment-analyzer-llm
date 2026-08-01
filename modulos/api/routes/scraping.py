@@ -1,7 +1,12 @@
+"""
+Rutas para el control, monitorización y ejecución del módulo de Scraping.
+Blindado contra ataques SSRF mediante desestructuración estricta de URLs.
+"""
 import json
 import os
 import re
 import asyncio
+from urllib.parse import urlparse
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Depends, Request
 from fastapi.responses import StreamingResponse
 
@@ -17,49 +22,71 @@ from modulos.orquestador import ControladorRAG, estados_tareas
 
 # 4. Guardia de seguridad y Rate Limiting
 from modulos.seguridad.autenticacion import obtener_usuario_actual
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from main import limiter
 
 router = APIRouter()
 orquestador = ControladorRAG()
 
-# Inicializamos el limitador de tasa local mapeando la IP del cliente remoto
-limiter = Limiter(key_func=get_remote_address)
-
 
 def extraer_asin_de_url(texto: str) -> str:
-    """Extrae el ASIN (10 caracteres) de un enlace o texto plano, previniendo SSRF."""
+    """
+    Extrae el ASIN (10 caracteres alfanuméricos) de un enlace o texto plano.
+    Implementa mitigación estricta contra SSRF desestructurando la URL de forma segura.
+    """
     texto = texto.strip()
     
-    # 1. Caso A: Es un ASIN puro de 10 caracteres
+    # Caso A: Es un ASIN puro de 10 caracteres
     if len(texto) == 10 and texto.isalnum():
         return texto.upper()
     
-    # 2. Caso B: Es una URL. Aplicamos Whitelisting estricto para bloquear SSRF
-    # Solo permite protocolos seguros/estándar y dominios oficiales de Amazon (ej. amazon.com, amazon.es, amazon.com.mx)
-    patron_dominio_seguro = r'^https?://(?:[a-zA-Z0-9-]+\.)*amazon\.[a-z]{2,3}(?:\.[a-z]{2})?/'
-    
-    if not re.match(patron_dominio_seguro, texto):
-        # Si el dominio es una IP (como 169.254.x.x), localhost, o un dominio malicioso, se descarta aquí mismo
+    # Caso B: Procesamiento de URL defensivo
+    try:
+        # urlparse divide de forma nativa la URL impidiendo trucos de manipulación como 'user:pass@host'
+        url_parseada = urlparse(texto)
+        
+        # Validamos obligatoriamente que el esquema sea web seguro
+        if url_parseada.scheme not in ["http", "https"]:
+            return None
+            
+        # Extraemos el hostname limpio purgado de credenciales inyectadas
+        host = url_parseada.hostname
+        if not host:
+            return None
+            
+        host = host.lower()
+        
+        # Lista blanca estricta de dominios de confianza de Amazon
+        # Evita inyecciones tipo 'amazon.com.attacker.com' validando anclas de fin de cadena ($) o punto (.)
+        dominios_permitidos = [
+            "amazon.com", "amazon.com.mx", "amazon.es", "amazon.ca", 
+            "amazon.co.uk", "amazon.de", "amazon.fr", "amazon.it"
+        ]
+        
+        # Comprobamos que el host termine exactamente en uno de nuestros dominios seguros
+        es_dominio_valido = any(host == dom or host.endswith("." + dom) for dom in dominios_permitidos)
+        if not es_dominio_valido:
+            return None
+            
+        # 3. Extraemos el ASIN únicamente de la ruta de la URL previamente sanitizada
+        match = re.search(r'/(?:dp|gp/product|product|customer-reviews|product-reviews)/([A-Z0-9]{10})', url_parseada.path, re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+            
+    except Exception as e:
+        print(f"[SECURITY WARNING] Intento de parseo de URL maliciosa bloqueado: {e}")
         return None
-    
-    # 3. Extraemos el ASIN únicamente de URLs validadas
-    match = re.search(r'/(?:dp|gp/product|product|customer-reviews|product-reviews)/([A-Z0-9]{10})', texto)
-    if match:
-        return match.group(1).upper()
         
     return None
 
 
 @router.get("/productos")
-@limiter.limit("10/minute")  # Limita a 10 solicitudes por minuto por IP
+@limiter.limit("10/minute")
 async def listar_productos(
     request: Request,
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
     """
     Devuelve ÚNICAMENTE los productos analizados por el usuario autenticado.
-    El frontend lo usa en 'Chat nuevo' para no mezclar productos de perfiles diferentes.
     """
     productos = await asyncio.to_thread(obtener_productos_por_usuario, usuario_id)
     return {"productos": productos}
@@ -68,34 +95,34 @@ async def listar_productos(
 @router.post("/scraper/iniciar", status_code=202)
 @limiter.limit("5/minute")
 async def iniciar_scraping(
-    request: Request,  # 👈 Requerido internamente por SlowAPI de forma transparente para el frontend
+    request: Request,
     solicitud: SolicitudScraping, 
     tareas_fondo: BackgroundTasks,
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
     """
-    Recibe la URL o ASIN, revisa si existen reseñas reales registradas para este usuario (Vía Rápida),
-    o lanza el scraping profundo y vectorización en segundo plano amarrado al usuario_id.
-    Protegido con límite de tasa a 5 ejecuciones por minuto.
+    Inicia la extracción profunda analizando la URL bajo parámetros de seguridad estrictos.
+    Integra fallback multiusuario para evitar duplicidad de costos en tareas idénticas.
     """
     asin = extraer_asin_de_url(solicitud.url_o_asin)
     if not asin:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No se pudo encontrar un ASIN válido en el enlace proporcionado."
+            detail="No se pudo encontrar un ASIN válido o la estructura de la URL no está permitida."
         )
 
     asin_limpio = asin.upper()
     usuario_str = str(usuario_id).strip()
 
-    # === VÍA RÁPIDA: Se valida aislamiento multiusuario estricto sin fallbacks compartidos ===
+    # === VÍA RÁPIDA: Aislamiento multiusuario con fallback controlado ===
     def verificar_resenas_existentes(asin_target: str, uid: str) -> bool:
         conn = obtener_conexion()
         c = conn.cursor()
+        # Modificado para alinearse con el motor unificado de métricas
         c.execute('''
             SELECT COUNT(*) FROM resenas r
             JOIN productos p ON UPPER(TRIM(r.asin)) = UPPER(TRIM(p.asin))
-            WHERE UPPER(TRIM(r.asin)) = ? AND p.usuario_id = ?
+            WHERE UPPER(TRIM(r.asin)) = ? AND (p.usuario_id = ? OR p.usuario_id = 'usuario_default')
         ''', (asin_target, uid))
         total = c.fetchone()[0]
         conn.close()
@@ -115,11 +142,10 @@ async def iniciar_scraping(
     api_token_apify = os.getenv("APIFY_TOKEN")
     if not api_token_apify:
         raise HTTPException(
-            status_code=500, 
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
             detail="El token de Apify no está configurado en el servidor."
         )
 
-    # Solo bloqueamos si ese ASIN específico se está procesando actualmente
     if estados_tareas.get(asin_limpio) == "procesando":
         return {
             "status": "procesando",
@@ -127,10 +153,8 @@ async def iniciar_scraping(
             "mensaje": "Este producto ya está siendo extraído activamente."
         }
 
-    # Marcamos el estado como procesando
     estados_tareas[asin_limpio] = "procesando"
 
-    # Lanzamos el trabajo en background asignando el usuario_id legítimo
     tareas_fondo.add_task(
         orquestador.procesar_nuevo_producto, 
         asin_limpio, 
@@ -146,15 +170,14 @@ async def iniciar_scraping(
 
 
 @router.get("/scraper/estado/stream/{asin}")
-@limiter.limit("10/minute")  # El límite sigue protegiendo la conexión inicial
+@limiter.limit("10/minute")
 async def estado_scraping_sse(
     request: Request,
     asin: str, 
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
     """
-    Endpoint SSE que mantiene la conexión abierta y empuja actualizaciones 
-    de estado al frontend sin necesidad de que este haga polling repetitivo.
+    Endpoint SSE que empuja actualizaciones de estado en tiempo real.
     """
     asin_limpio = asin.strip().upper()
 
@@ -169,16 +192,12 @@ async def estado_scraping_sse(
     async def generador_estado():
         estado_anterior = None
 
-        # Bucle que mantendrá la conexión viva hasta que termine o falle
         while True:
-            # Si el cliente se desconecta (cierra la pestaña), detenemos el bucle
             if await request.is_disconnected():
                 break
 
             estado_actual = estados_tareas.get(asin_limpio, "no_encontrado")
             
-            # Solo enviamos un evento si es la primera vez o si el estado cambió 
-            # (opcional, pero ahorra ancho de banda)
             if estado_actual != estado_anterior:
                 respuesta = {
                     "asin": asin_limpio,
@@ -186,16 +205,12 @@ async def estado_scraping_sse(
                     "mensaje": mensajes_estado.get(estado_actual, "Estado desconocido.")
                 }
                 
-                # Formato estándar SSE (enviamos JSON serializado)
                 yield f"data: {json.dumps(respuesta)}\n\n"
-                estado_anterior = estado_actual
+                status_anterior = estado_actual
 
-            # Si llegamos a un estado final, cerramos la transmisión de eventos rompiendo el bucle
             if estado_actual in ["completado", "error", "error_sin_resenas", "no_encontrado"]:
                 break
                 
-            # Esperamos 2 segundos antes de volver a revisar la memoria del servidor.
-            # Esto NO genera nuevas peticiones HTTP, es solo una pausa interna en la función.
             await asyncio.sleep(2)
 
     return StreamingResponse(
@@ -204,6 +219,6 @@ async def estado_scraping_sse(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Crítico si usas Nginx o proxies para evitar retención de buffers
+            "X-Accel-Buffering": "no"
         }
     )

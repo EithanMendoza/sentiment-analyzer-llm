@@ -24,11 +24,10 @@ from modulos.base_datos.operaciones.reportes import generar_excel_resenas, gener
 from modulos.seguridad.autenticacion import obtener_usuario_actual
 
 from fastapi import Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from main import limiter
 
 # Inicializamos en memoria RAM (perfecto para tu servidor en Oracle)
-limiter = Limiter(key_func=get_remote_address)
+
 
 router = APIRouter()
 
