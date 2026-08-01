@@ -99,40 +99,30 @@ class MotorAnaliticoLineal:
         # Extraemos solo el texto de las reseñas encontradas
         contexto_opiniones = "\n\n".join([nodo.node.text for nodo in nodos])
 
-        # Si no encontró nada específico con los filtros, intentamos un respaldo sin filtros
-        if not contexto_opiniones and asin_producto:
-            print(f"[MOTOR WARN] ⚠️ No se hallaron nodos exactos para el ASIN '{asin_producto}'. Intentando búsqueda global de respaldo...")
-            retriever_global = self.index.as_retriever(similarity_top_k=SIMILARITY_TOP_K)
-            nodos = await retriever_global.aretrieve(pregunta)
-            contexto_opiniones = "\n\n".join([nodo.node.text for nodo in nodos])
-            print(f"[MOTOR DEBUG] 📦 Nodos recuperados en búsqueda global: {len(nodos)}")
-
         print(f"[MOTOR DEBUG] 📝 Longitud total del texto de opiniones recuperado: {len(contexto_opiniones)} caracteres.")
 
         # 3. ARMAMOS EL SÚPER-PROMPT MANUALMENTE (Optimizado para Qwen 3B)
+        nombre_seguro = nombre_producto if nombre_producto else 'No especificado'
+        ficha_segura = caracteristicas if caracteristicas else 'Sin ficha técnica'
+        opiniones_seguras = contexto_opiniones if contexto_opiniones else 'No hay opiniones registradas para esta consulta.'
+
         prompt_final = (
-    f"### SISTEMA\n"
-    f"Eres una IA experta en analizar reseñas. No eres humano.\n"
-    f"SALUDOS: Si el usuario solo saluda (ej. 'hola') o pregunta quién eres, responde EXACTAMENTE: "
-    f"'¡Hola! Soy el Asistente Experto en analisis de reseñas. ¿En qué te ayudo con este producto?' y DETENTE.\n\n"
-    
-    f"### DATOS DEL PRODUCTO\n"
-    f"- Nombre: {nombre_producto if nombre_producto else 'N/A'}\n"
-    f"- ASIN: {asin_producto if asin_producto else 'N/A'}\n"
-    f"- Ficha: {caracteristicas if caracteristicas else 'N/A'}\n"
-    f"- Opiniones: {contexto_opiniones if contexto_opiniones else 'N/A'}\n\n"
-    
-    f"### TAREA PRINCIPAL Y RESTRICCIONES (NO LAS MENCIONES EN TU RESPUESTA)\n"
-    f"- OBJETIVO: Tu prioridad es esforzarte en encontrar la respuesta a la consulta basándote en los DATOS DEL PRODUCTO.\n"
-    f"- VE AL GRANO: Responde directamente la duda. NO repitas estas reglas ni expliques tu proceso lógico.\n"
-    f"- CITA: Si mencionas una reseña, anonimiza al usuario (ej. 'Un cliente', 'Un comprador anónimo') pero sí menciona las estrellas.\n"
-    f"- NO INVENTES: Usa exclusivamente la información de los datos proporcionados.\n"
-    f"- ÚLTIMO RECURSO: ÚNICAMENTE si es absolutamente imposible responder porque la información no existe en los datos, di: 'No cuento con registros suficientes en las opiniones.'\n\n"
-    
-    f"### CONSULTA DEL USUARIO\n"
-    f"{pregunta}\n\n"
-    f"### RESPUESTA DIRECTA:\n"
-)
+            f"Eres un analista experto en compras. Tu única tarea es responder a la pregunta del usuario basándote estrictamente en el contexto del producto proporcionado.\n\n"
+            f"=== CONTEXTO DEL PRODUCTO ===\n"
+            f"Producto: {nombre_seguro}\n"
+            f"Características: {ficha_segura}\n"
+            f"Opiniones de clientes:\n{opiniones_seguras}\n"
+            f"=============================\n\n"
+            f"REGLAS OBLIGATORIAS:\n"
+            f"- Si el usuario dice 'hola' o te saluda, responde amablemente preguntando en qué le puedes ayudar.\n"
+            f"- Responde a la pregunta de forma directa, natural y al grano.\n"
+            f"- Utiliza SÓLO la información del bloque 'CONTEXTO DEL PRODUCTO'. No inventes datos.\n"
+            f"- Cita las calificaciones (estrellas) cuando menciones una opinión, pero mantén al usuario anónimo.\n"
+            f"- Si la pregunta no se puede responder con el contexto proporcionado, responde: 'Lo siento, no encuentro información sobre eso en las opiniones o características.'\n\n"
+            f"Pregunta del usuario: {pregunta}\n\n"
+            f"Respuesta:"
+        )
+
         # 4. STREAMING DIRECTO AL LLM (Ollama / Qwen)
         print("[MOTOR DEBUG] 🚀 Enviando el prompt final a Ollama via Settings.llm.astream_complete()...")
         print("="*60 + "\n")
@@ -142,18 +132,45 @@ class MotorAnaliticoLineal:
 
 # Bloque de prueba local
 if __name__ == "__main__":
+    import time
+    import sqlite3 # Importamos SQLite solo para la prueba autónoma
+    import asyncio
+    
     async def prueba_local():
         motor = MotorAnaliticoLineal()
         print("\n--- PRUEBA DE VELOCIDAD Y CONTEXTO ---")
-        asin_ejemplo = "B0C6BJ95SC"
-        pregunta_usuario = "¿Qué tal sale en general este producto?"
+        asin_ejemplo = "B0D44135S2"
+        pregunta_usuario = "¿Por qué hay calificaciones de 1 estrella, qué fue lo que falló?"
         
-        resultado = await motor.consultar(pregunta=pregunta_usuario, asin_producto=asin_ejemplo)
+        # 1. SIMULAMOS LO QUE HACE FASTAPI: Buscar el producto en la BD real
+        nombre_real = "No especificado"
+        try:
+            conn = sqlite3.connect("datos/base_datos.db") # Ajusta tu ruta si es distinta
+            cursor = conn.cursor()
+            cursor.execute("SELECT nombre FROM productos WHERE asin = ?", (asin_ejemplo,))
+            resultado_bd = cursor.fetchone()
+            if resultado_bd:
+                nombre_real = resultado_bd[0]
+            conn.close()
+            print(f"[TEST DB] Nombre extraído de SQLite: {nombre_real[:30]}...")
+        except Exception as e:
+            print(f"[TEST DB ERROR] No se pudo leer SQLite: {e}")
+
+        print(f"Pregunta: {pregunta_usuario}")
+        t_inicio = time.time()
         
+        # 2. SE LO PASAMOS AL MOTOR (Ahora sí, 100% automático)
+        resultado = await motor.consultar(
+            pregunta=pregunta_usuario, 
+            asin_producto=asin_ejemplo,
+            nombre_producto=nombre_real
+        )
+        
+        # ... (resto del código de impresión del streaming)
         print("\nRespuesta de la IA:")
         async for chunk in resultado:
             texto = chunk.delta if hasattr(chunk, 'delta') else chunk
             print(texto, end="", flush=True)
-        print()
+        print("\n--------------------------------------\n")
 
     asyncio.run(prueba_local())
