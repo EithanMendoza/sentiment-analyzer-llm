@@ -64,8 +64,8 @@ async def consultar_ultima_auditoria(
     # Formateamos la respuesta EXACTAMENTE con las claves que espera React.
     # Al hacer esto, también estamos omitiendo automáticamente el "session_id", 
     # por lo que mantenemos la seguridad intacta.
+    # Formateamos la respuesta EXACTAMENTE con las claves que espera React.
     return {
-        "prompt": resultado.get("user_prompt", "Sin prompt"),
         "ttft_ms": resultado.get("ttft_ms", 0),
         "total_latency_ms": resultado.get("total_latency_ms", 0),
         "tokens_per_second": resultado.get("tokens_per_second", 0)
