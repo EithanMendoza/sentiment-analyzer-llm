@@ -67,6 +67,13 @@ class IndexadorRAG:
             documentos_llamaindex.append(doc)
 
         print("[INFO] Inicializando ChromaDB localmente...")
+        
+        # 🛡️ SOLUCIÓN: Limpiamos el caché global del sistema para evitar conflictos de estancias en ChromaDB
+        try:
+            chromadb.api.client.SharedSystemClient.clear_system_cache()
+        except Exception:
+            pass
+
         db_cliente = chromadb.PersistentClient(
             path=self.ruta_db,
             settings=Settings(
@@ -101,6 +108,12 @@ class IndexadorRAG:
         Implementación auto-contenida para evitar errores de atributos faltantes.
         """
         try:
+            # 🛡️ Limpiamos también el caché aquí por seguridad
+            try:
+                chromadb.api.client.SharedSystemClient.clear_system_cache()
+            except Exception:
+                pass
+
             db_cliente = chromadb.PersistentClient(
                 path=self.ruta_db,
                 settings=Settings(
