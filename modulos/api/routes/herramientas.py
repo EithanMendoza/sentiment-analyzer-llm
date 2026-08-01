@@ -127,12 +127,22 @@ async def endpoint_metricas_rapidas(
     sentimientos = await asyncio.to_thread(contar_sentimientos_totales, asin_limpio, usuario_str)
     critica = await asyncio.to_thread(obtener_reseña_mas_critica, asin_limpio, usuario_str)
     
-    # 2. Extraemos el nombre oficial garantizando compatibilidad con el fallback
+    # 2. Extraemos el nombre oficial garantizando compatibilidad con tuplas y diccionarios
     producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, usuario_str)
     if not producto_data:
         producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, "usuario_default")
         
-    producto_nombre = producto_data["nombre"] if producto_data else f"Producto ({asin_limpio})"
+    # ✅ CORRECCIÓN: Validamos de forma segura si la BD devolvió un diccionario, una tupla, o nada
+    if producto_data:
+        if isinstance(producto_data, dict):
+            producto_nombre = producto_data.get("nombre", f"Producto ({asin_limpio})")
+        elif isinstance(producto_data, (tuple, list)):
+            # Si SQLite devolvió una tupla pura, el nombre suele estar en la posición 1
+            producto_nombre = producto_data[1] if len(producto_data) > 1 else f"Producto ({asin_limpio})"
+        else:
+            producto_nombre = str(producto_data)
+    else:
+        producto_nombre = f"Producto ({asin_limpio})"
 
     # 3. Retornamos todo listo y aislado para el Dashboard en React
     return {
@@ -141,8 +151,6 @@ async def endpoint_metricas_rapidas(
         "distribucion_sentimientos": sentimientos,
         "reseña_destacada": critica
     }
-
-
 @router.get("/metricas/ultima")
 @limiter.limit("5/minute")
 async def obtener_ultima_metrica(
