@@ -71,19 +71,25 @@ async def hacer_consulta(
     asin_real = detalles_sesion["asin"]
 
     # Obtener datos del producto
+    # 1. Obtenemos los datos del producto de manera segura
     datos_producto = await asyncio.to_thread(obtener_producto, asin_real)
 
+    # 2. Definimos el nombre real del producto de forma independiente
+    if datos_producto and datos_producto.get("nombre"):
+        nombre_prod = datos_producto["nombre"]
+    else:
+        # Si no hay nombre en la BD, usamos el ASIN o un texto descriptivo limpio, NUNCA el título genérico de sesión
+        nombre_prod = f"Producto ASIN: {asin_real}"
+
+    # 3. Procesamos las características por separado
     if datos_producto and datos_producto.get("caracteristicas"):
         caracteristicas_lista = datos_producto["caracteristicas"]
-        # Formateamos la lista de Python a texto legible con viñetas para la IA
         if isinstance(caracteristicas_lista, list):
             caracteristicas_texto = "\n- " + "\n- ".join(str(c) for c in caracteristicas_lista)
         else:
             caracteristicas_texto = str(caracteristicas_lista)
-        nombre_prod = datos_producto["nombre"]
     else:
         caracteristicas_texto = "No hay especificaciones adicionales registradas."
-        nombre_prod = detalles_sesion["titulo"]
 
     # 3. Guardamos la pregunta del usuario inyectando el ASIN real
     await asyncio.to_thread(
