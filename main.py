@@ -6,9 +6,11 @@ from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 
 # --- INTEGRACIÓN DE RATE LIMITING (SLOWAPI) ---
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+
+# ✅ IMPORTAMOS EL LIMITER DESDE EL NUEVO ARCHIVO NEUTRAL
+from modulos.api.rate_limiter import limiter
 
 # Importamos el motor
 from modulos.agente.motor import MotorAnaliticoLineal
@@ -19,15 +21,7 @@ from modulos.base_datos.tablas_setup import inicializar_base_datos
 from modulos.api.routes import chat, herramientas, metricas, auth, historial, scraping
 
 
-def obtener_ip_real(request: Request) -> str:
-    """
-    Extrae la IP real del cliente evitando la falsificación de cabeceras X-Forwarded-For.
-    Prioriza CF-Connecting-IP (Cloudflare) y cae a request.client.host (socket TCP directo).
-    """
-    ip_cf = request.headers.get("CF-Connecting-IP")
-    if ip_cf:
-        return ip_cf.strip()
-    return request.client.host if request.client else "127.0.0.1"
+
 
 async def ciclo_vida_api(app: FastAPI):
     """
@@ -70,10 +64,7 @@ app = FastAPI(
 REDIS_URL = os.getenv("REDIS_URL", "memory://")
 
 # ✅ REV-2026-02: Se eliminó la doble inicialización redundante del Limiter
-limiter = Limiter(
-    key_func=obtener_ip_real, 
-    storage_uri=REDIS_URL
-)
+
 
 # Registramos el limitador
 app.state.limiter = limiter

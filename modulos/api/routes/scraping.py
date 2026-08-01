@@ -22,7 +22,7 @@ from modulos.orquestador import ControladorRAG, estados_tareas
 
 # 4. Guardia de seguridad y Rate Limiting
 from modulos.seguridad.autenticacion import obtener_usuario_actual
-from main import limiter
+from modulos.api.rate_limiter import limiter
 
 router = APIRouter()
 orquestador = ControladorRAG()

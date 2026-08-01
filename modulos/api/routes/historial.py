@@ -26,7 +26,7 @@ from modulos.base_datos.operaciones.productos import obtener_producto
 from modulos.seguridad.autenticacion import obtener_usuario_actual
 
 from fastapi import Request
-from main import limiter
+from modulos.api.rate_limiter import limiter
 
 router = APIRouter()
 

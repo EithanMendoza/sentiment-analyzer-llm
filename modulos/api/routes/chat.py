@@ -15,7 +15,7 @@ from modulos.base_datos.operaciones.productos import obtener_producto
 # 3. Guardia de seguridad, Guardrails y Rate Limiting
 from modulos.seguridad.autenticacion import obtener_usuario_actual
 from modulos.seguridad.guardrails import validar_prompt_seguro
-from main import limiter
+from modulos.api.rate_limiter import limiter
 
 router = APIRouter()
 

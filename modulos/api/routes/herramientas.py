@@ -22,7 +22,7 @@ from modulos.base_datos.conexion import obtener_conexion
 from modulos.base_datos.operaciones.productos import obtener_producto
 
 # Importamos el Rate Limiter
-from main import limiter
+from modulos.api.rate_limiter import limiter
 
 router = APIRouter()
 

@@ -31,8 +31,7 @@ from modulos.seguridad.autenticacion import (
     PUBLIC_KEY,
     ALGORITHM
 )
-from main import limiter
-
+from modulos.api.rate_limiter import limiter
 router = APIRouter()
 
 # Se inicializa el limitador local para mapear por IP del cliente
