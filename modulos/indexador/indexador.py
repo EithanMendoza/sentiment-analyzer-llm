@@ -34,10 +34,12 @@ class IndexadorRAG:
             estrellas_valor = item.get("estrellas") if item.get("estrellas") else 0
             metadatos_ia = item.get("metadatos", {})
             
-            # FORMATO BLINDADO CORREGIDO: El LLM verá la calificación y la fecha
+            # ================================================================================
+            # MITIGACIÓN PII (DATA MASKING): Se elimina el campo 'AUTOR' del bloque de texto
+            # principal para forzar el anonimato real a nivel de datos. El LLM jamás verá el nombre.
+            # ================================================================================
             texto_estructurado = f"""
             === RESEÑA DE CLIENTE ===
-            AUTOR: {item.get('autor', 'Anónimo')}
             CALIFICACIÓN: {estrellas_valor} de 5 estrellas
             FECHA: {metadatos_ia.get('fecha_publicacion', 'Fecha desconocida')}
             TITULO: {item.get('titulo_comentario', 'Sin título')}
@@ -49,6 +51,8 @@ class IndexadorRAG:
                 text=texto_estructurado,
                 id_=str(item.get("id", "desconocido")),
                 metadata={
+                    # Mantenemos el autor aquí por integridad de metadatos del vector indexado, 
+                    # pero aislamos al LLM de leerlo directamente en el cuerpo del texto.
                     "autor": str(item.get("autor", "Anónimo")),
                     "estrellas": str(estrellas_valor),
                     "fuente": str(item.get("fuente", "Desconocida")),
@@ -56,7 +60,7 @@ class IndexadorRAG:
                     "categoria": str(metadatos_ia.get("categoria", "General")),
                     "fecha": str(metadatos_ia.get("fecha_publicacion", "")),
                     "asin": str(item.get("asin", "desconocido")),
-                    # CAMBIO CLAVE: Guardamos obligatoriamente el usuario que indexa esta reseña
+                    # Guardamos obligatoriamente el usuario que indexa esta reseña para el aislamiento Multi-tenant
                     "usuario_id": str(usuario_id)
                 }
             )
@@ -97,7 +101,6 @@ class IndexadorRAG:
         Implementación auto-contenida para evitar errores de atributos faltantes.
         """
         try:
-            # Inicializamos el cliente directamente sin depender de métodos auxiliares externos
             db_cliente = chromadb.PersistentClient(
                 path=self.ruta_db,
                 settings=Settings(

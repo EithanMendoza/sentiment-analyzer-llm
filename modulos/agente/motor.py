@@ -48,7 +48,7 @@ class MotorAnaliticoLineal:
     # "Fake Streaming" bloqueando la CPU al usar modelos locales. 
     # ¡NO REFACTORIZAR a as_query_engine!
     
-    async def consultar(self, pregunta: str, asin_producto: str = None, nombre_producto: str = None, caracteristicas: str = None):
+async def consultar(self, pregunta: str, asin_producto: str = None, nombre_producto: str = None, caracteristicas: str = None, usuario_id: str = None):
         """Punto de entrada RAG Manual con Streaming 100% Nativo y filtrado por ASIN."""
         
         print("\n" + "="*60)
@@ -73,16 +73,25 @@ class MotorAnaliticoLineal:
             return MockStreamingResponse()
 
         # 2. BÚSQUEDA VECTORIAL PURA CON FILTRADO POR CONTEXTO (ASIN)
-        filtros = None
+       # 2. BÚSQUEDA VECTORIAL PURA CON FILTRADO ESTRICTO (ASIN + USUARIO)
+        filtros_lista = []
+        
         if asin_producto:
             # ✅ CORRECCIÓN: Normalizamos el ASIN para que ChromaDB no falle por diferencias de mayúsculas/minúsculas
             asin_normalizado = str(asin_producto).strip().upper()
             print(f"[MOTOR DEBUG] 🔍 Aplicando filtro de metadatos exacto para ASIN: '{asin_normalizado}'")
-            filtros = MetadataFilters(
-                filters=[ExactMatchFilter(key="asin", value=asin_normalizado)]
-            )
+            filtros_lista.append(ExactMatchFilter(key="asin", value=asin_normalizado))
         else:
-            print("[MOTOR DEBUG] ⚠️ No se proporcionó ASIN. Realizando búsqueda global sin filtros.")
+            print("[MOTOR DEBUG] ⚠️ No se proporcionó ASIN. Realizando búsqueda global sin filtros de ASIN.")
+
+        if usuario_id:
+            print(f"[MOTOR DEBUG] 🔒 Aplicando aislamiento vectorial estricto para el usuario: '{usuario_id}'")
+            filtros_lista.append(ExactMatchFilter(key="usuario_id", value=str(usuario_id)))
+        else:
+            print("[MOTOR DEBUG] ⚠️ Advertencia: No se proporcionó usuario_id para el aislamiento vectorial.")
+
+        # Construimos el objeto MetadataFilters combinando ambos filtros con un AND implícito
+        filtros = MetadataFilters(filters=filtros_lista) if filtros_lista else None
 
         try:
             retriever = self.index.as_retriever(
@@ -92,7 +101,7 @@ class MotorAnaliticoLineal:
             
             print("[MOTOR DEBUG] 🛰️ Ejecutando retriever.aretrieve()...")
             nodos = await retriever.aretrieve(pregunta)
-            print(f"[MOTOR DEBUG] 📦 Nodos recuperados con filtro: {len(nodos)}")
+            print(f"[MOTOR DEBUG] 📦 Nodos recuperados con filtro estricto: {len(nodos)}")
             
             # Extraemos solo el texto de las reseñas encontradas
             contexto_opiniones = "\n\n".join([nodo.node.text for nodo in nodos])

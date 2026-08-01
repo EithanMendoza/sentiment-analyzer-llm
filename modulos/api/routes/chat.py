@@ -107,7 +107,8 @@ async def hacer_consulta(
             pregunta=prompt_sanitizado, 
             asin_producto=asin_real,
             nombre_producto=nombre_prod,
-            caracteristicas=caracteristicas_texto
+            caracteristicas=caracteristicas_texto,
+            usuario_id=usuario_str
         )
 
         # 5. Generador asíncrono modificado para SSE
