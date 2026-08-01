@@ -78,14 +78,25 @@ class ControladorRAG:
         try:
             # ==========================================
             # FASE 1: METADATOS OFICIALES (BeautifulSoup -> SQLite)
+            # Protegida con try-except individual para que un bloqueo de Amazon no tire el proceso
             # ==========================================
             print("[ORQUESTADOR] Fase 1: Extrayendo ficha técnica...")
-            datos_oficiales = self.extractor_oficial.obtener_ficha_tecnica(asin_limpio)
+            nombre_producto = f"Producto ASIN: {asin_limpio}"
+            caracteristicas_producto = []
             
+            try:
+                datos_oficiales = self.extractor_oficial.obtener_ficha_tecnica(asin_limpio)
+                if datos_oficiales and datos_oficiales.get("nombre"):
+                    nombre_producto = datos_oficiales.get("nombre")
+                if datos_oficiales and datos_oficiales.get("caracteristicas"):
+                    caracteristicas_producto = datos_oficiales.get("caracteristicas")
+            except Exception as e:
+                print(f"[ORQUESTADOR ADVERTENCIA] La Fase 1 (BeautifulSoup) se bloqueó o falló: {e}. Continuando con respaldo...")
+
             guardar_o_actualizar_producto(
                 asin=asin_limpio, 
-                nombre=datos_oficiales.get("nombre", f"Producto ASIN: {asin_limpio}"), 
-                caracteristicas=datos_oficiales.get("caracteristicas", []),
+                nombre=nombre_producto, 
+                caracteristicas=caracteristicas_producto,
                 usuario_id=uid_limpio
             )
             

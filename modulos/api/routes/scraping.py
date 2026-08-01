@@ -185,7 +185,7 @@ async def estado_scraping_sse(
         "procesando": "Extrayendo ficha técnica y opiniones de Amazon...",
         "completado": "El producto y las opiniones se han procesado exitosamente.",
         "error_sin_resenas": "No se encontraron opiniones públicas para este producto.",
-        "error": "No se pudo completar el análisis del producto. Revisa el enlace o intenta más tarde.",
+        "error": "Error de extracción: Posible bloqueo anti-bot (CAPTCHA/Cloudflare) o fallo al conectar con Amazon. Intenta de nuevo más tarde.",
         "no_encontrado": "El producto no está en cola de procesamiento."
     }
 
