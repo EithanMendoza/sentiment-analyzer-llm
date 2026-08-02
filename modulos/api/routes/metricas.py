@@ -53,18 +53,15 @@ async def consultar_ultima_auditoria(
     resultado = await asyncio.to_thread(obtener_ultima_metrica, usuario_id)
     
     if not resultado:
-        # Valores por defecto para que el frontend no colapse
+        # 🛡️ MITIGACIÓN: Eliminamos la clave "prompt" por completo de la respuesta por defecto
         return {
-            "prompt": "Sin interacciones aún",
             "ttft_ms": 0,
             "total_latency_ms": 0,
             "tokens_per_second": 0
         }
     
-    # Formateamos la respuesta EXACTAMENTE con las claves que espera React.
-    # Al hacer esto, también estamos omitiendo automáticamente el "session_id", 
-    # por lo que mantenemos la seguridad intacta.
-    # Formateamos la respuesta EXACTAMENTE con las claves que espera React.
+    # Formateamos la respuesta EXACTAMENTE con las claves que espera React,
+    # asegurando que el prompt interno de LLM jamás viaje en el payload.
     return {
         "ttft_ms": resultado.get("ttft_ms", 0),
         "total_latency_ms": resultado.get("total_latency_ms", 0),

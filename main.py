@@ -49,15 +49,20 @@ async def ciclo_vida_api(app: FastAPI):
     print("\n[SHUTDOWN] Apagando el servidor y liberando recursos.")
     app.state.motor_ia = None
 
+# ✅ Leemos el entorno para decidir si exponemos la documentación de la API
+ENTORNO = os.getenv("ENTORNO", "produccion").lower()
 
 # Inicializamos la aplicación FastAPI
-# ✅ REV-2026-05: Establecemos explícitamente debug=False para producción
 app = FastAPI(
     title="API del Agente Analítico de Reseñas",
     description="API modular con Streaming para consultar opiniones de productos.",
     version="1.0.0",
     lifespan=ciclo_vida_api,
-    debug=False 
+    debug=False,
+    # 🛡️ MITIGACIÓN: Desactivar la documentación pública en producción
+    docs_url="/docs" if ENTORNO == "desarrollo" else None,
+    redoc_url="/redoc" if ENTORNO == "desarrollo" else None,
+    openapi_url="/openapi.json" if ENTORNO == "desarrollo" else None
 )
 
 # Configuramos la URL de Redis.
@@ -185,8 +190,12 @@ app.include_router(
 # =====================================================================
 @app.get("/estado", tags=["Sistema"])
 @limiter.limit("5/minute")
-async def verificar_estado(request: Request):
-    """Verifica si el servidor está arriba y si el motor RAG cargó bien."""
+async def verificar_estado(
+    request: Request,
+    # 🛡️ MITIGACIÓN: Inyectamos la dependencia para que solo usuarios válidos vean el estado
+    usuario_id: str = Depends(obtener_usuario_actual) 
+):
+    """Verifica si el servidor está arriba y si el motor RAG cargó bien (Protegido)."""
     motor_cargado = getattr(app.state, "motor_ia", None) is not None
     return {
         "estado": "en_linea",

@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -13,20 +13,15 @@ load_dotenv()
 # =====================================================================
 # CONFIGURACIÓN DE SEGURIDAD BLINDADA (RS256)
 # =====================================================================
-# Cargamos las llaves asimétricas. El .replace("\\n", "\n") es vital porque 
-# a menudo los archivos .env leen los saltos de línea como texto literal.
 PRIVATE_KEY = os.getenv("JWT_PRIVATE_KEY", "").replace("\\n", "\n")
 PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY", "").replace("\\n", "\n")
 
-# Cambiamos explícitamente a RS256
 ALGORITHM = "RS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120  # El token expira en 2 horas
 
-# Verificación de seguridad al arranque
 if not PRIVATE_KEY or not PUBLIC_KEY:
     print("[ADVERTENCIA] Faltan las llaves RSA para firmar/verificar JWT. El login fallará.")
 
-# Configuración del algoritmo de encriptación (bcrypt)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # =====================================================================
@@ -36,9 +31,11 @@ def obtener_hash_password(password: str) -> str:
     """Toma una contraseña en texto plano y devuelve un hash irreversible."""
     return pwd_context.hash(password)
 
+
 def verificar_password(plain_password: str, hashed_password: str) -> bool:
     """Compara una contraseña en texto plano con el hash guardado en la BD."""
     return pwd_context.verify(plain_password, hashed_password)
+
 
 # =====================================================================
 # GENERACIÓN DE TOKENS JWT
@@ -48,48 +45,64 @@ def crear_token_acceso(data: dict) -> str:
     Recibe un diccionario, extrae estrictamente el identificador y
     devuelve un token JWT firmado, eliminando cualquier PII.
     """
-    # 1. Extraemos SOLO el ID del usuario
     usuario_id = data.get("sub")
-    
+
     if not usuario_id:
         raise ValueError("El identificador 'sub' es obligatorio para generar el token.")
 
-    # 🔒 MITIGACIÓN PII: Armamos un diccionario nuevo explícitamente.
-    # Cualquier otro dato como 'nombre', 'apellido' o 'email' será ignorado.
     to_encode = {"sub": str(usuario_id)}
-    
-    # 2. Agregamos la expiración
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    
-    # 3. Firmamos el token
+
     encoded_jwt = jwt.encode(to_encode, PRIVATE_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+
+# =====================================================================
+# ESQUEMAS DE EXTRACCIÓN DE TOKEN
+# =====================================================================
+# Se conserva solo para que /docs siga mostrando el flujo OAuth2 en Swagger
+# (tokenUrl informativo). Ya NO se usa como dependencia real de las rutas
+# protegidas: el JWT viaja en una cookie HttpOnly, no en el header Authorization.
+esquema_oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+
+
+def obtener_token_cookie(access_token: str = Cookie(default=None)) -> str:
+    """
+    Extrae el JWT desde la cookie HttpOnly 'access_token'.
+    Reemplaza al header 'Authorization: Bearer' como fuente del token,
+    para que el JWT nunca sea accesible desde JavaScript (mitigación XSS).
+    """
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No autenticado.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return access_token
+
 
 # =====================================================================
 # DEPENDENCIA DE VALIDACIÓN DE SESIÓN (EL GUARDIA)
 # =====================================================================
-esquema_oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
-
-def obtener_usuario_actual(token: str = Depends(esquema_oauth2)):
+def obtener_usuario_actual(token: str = Depends(obtener_token_cookie)):
     """
-    Función Guardia: Intercepta el Token, comprueba la lista negra, 
-    lo desencripta y verifica si es válido.
+    Función Guardia: Intercepta el Token (ahora desde la cookie), comprueba
+    la lista negra, lo desencripta y verifica si es válido.
     """
     excepcion_credenciales = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="No se pudieron validar las credenciales o el token ha expirado.",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
-    # 🚀 VERIFICACIÓN DE LISTA NEGRA: Validamos si el token fue revocado por Logout
+
     try:
         conn = obtener_conexion()
         c = conn.cursor()
         c.execute('SELECT token FROM jwt_blacklist WHERE token = ?', (str(token),))
         token_revocado = c.fetchone()
         conn.close()
-        
+
         if token_revocado:
             raise excepcion_credenciales
     except HTTPException as he:
@@ -99,7 +112,6 @@ def obtener_usuario_actual(token: str = Depends(esquema_oauth2)):
         raise excepcion_credenciales
 
     try:
-        # 👇 VERIFICACIÓN USANDO LA LLAVE PÚBLICA
         payload = jwt.decode(token, PUBLIC_KEY, algorithms=[ALGORITHM])
         usuario_id: str = payload.get("sub")
         if usuario_id is None:
