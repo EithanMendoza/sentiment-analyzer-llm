@@ -67,19 +67,19 @@ def crear_token_acceso(data: dict) -> str:
 esquema_oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 
-def obtener_token_cookie(access_token: str = Cookie(default=None)) -> str:
+def obtener_token_cookie(token: str = Cookie(default=None, alias="__Host-access_token")) -> str:
     """
-    Extrae el JWT desde la cookie HttpOnly 'access_token'.
+    Extrae el JWT desde la cookie HttpOnly blindada '__Host-access_token'.
     Reemplaza al header 'Authorization: Bearer' como fuente del token,
     para que el JWT nunca sea accesible desde JavaScript (mitigación XSS).
     """
-    if not access_token:
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No autenticado.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return access_token
+    return token
 
 
 # =====================================================================
