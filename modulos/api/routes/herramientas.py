@@ -62,13 +62,11 @@ async def endpoint_exportar_csv(
     asin_limpio = asin.strip().upper()
     usuario_str = str(usuario_id).strip()
 
-    # 1. Verificar que el producto exista para el usuario o con fallback a usuario_default
+    # 🛡️ 1. ÚNICA VALIDACIÓN (Estricta)
     producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, usuario_str)
+    
     if not producto_data:
-        # Fallback de sincronización
-        producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, "usuario_default")
-
-    if not producto_data:
+        # Si no es suyo, bloqueamos de inmediato. Cero excepciones.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No se encontró el producto o no tienes permisos para exportar sus datos."
@@ -84,13 +82,10 @@ async def endpoint_exportar_csv(
             detail="No fue posible exportar el análisis en formato CSV."
         )
     
-    # 3. Buscamos el CSV recién generado con el patrón que incluye el usuario_id
+    # 3. Buscamos el CSV buscando ESTRICTAMENTE el que le pertenece al usuario
     rutas_posibles = glob.glob(f"datos/procesados/{usuario_str}_{asin_limpio}_*.csv")
-    if not rutas_posibles:
-        # Respaldo de búsqueda por si el nombre se generó bajo el fallback de usuario_default
-        rutas_posibles = glob.glob(f"datos/procesados/usuario_default_{asin_limpio}_*.csv")
-    if not rutas_posibles:
-        rutas_posibles = glob.glob(f"datos/procesados/*{asin_limpio}*.csv")
+    
+    # NOTA: Se eliminaron los respaldos que buscaban archivos de "usuario_default" o comodines
     
     if not rutas_posibles:
         raise HTTPException(
@@ -98,7 +93,6 @@ async def endpoint_exportar_csv(
             detail="El archivo CSV generado no fue localizado en el servidor."
         )
     
-    # Obtenemos el archivo más reciente
     archivo_reciente = max(rutas_posibles, key=os.path.getctime)
     
     return FileResponse(
@@ -116,17 +110,26 @@ async def endpoint_metricas_rapidas(
     usuario_id: str = Depends(obtener_usuario_actual)
 ):
     """
-    Devuelve un resumen estadístico consultando la base de datos relacional,
-    filtrando los datos de forma tolerante integrando el fallback de usuario_default.
+    Devuelve un resumen estadístico consultando la base de datos relacional.
     """
     asin_limpio = asin.strip().upper()
     usuario_str = str(usuario_id).strip()
 
-    # 1. Ejecutamos los cálculos asíncronos pasándole el usuario_id a cada función
+    # 1. VALIDACIÓN BOLA: Verificamos propiedad ESTRICTA
+    producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, usuario_str)
+    
+    if not producto_data:
+        # Bloqueamos el acceso inmediatamente si no es el dueño
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No se encontró el producto o no tienes permisos para acceder a estas métricas."
+        )
+
+    # 2. Si pasa la validación, procedemos con los cálculos...
     promedio = await asyncio.to_thread(calcular_promedio_estrellas, asin_limpio, usuario_str)
     sentimientos = await asyncio.to_thread(contar_sentimientos_totales, asin_limpio, usuario_str)
     critica = await asyncio.to_thread(obtener_reseña_mas_critica, asin_limpio, usuario_str)
-    
+        
     # 2. Extraemos el nombre oficial garantizando compatibilidad con tuplas y diccionarios
     producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, usuario_str)
     if not producto_data:

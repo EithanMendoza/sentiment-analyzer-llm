@@ -18,7 +18,7 @@ from modulos.base_datos.operaciones.auditoria import (
     obtener_ultima_metrica,
     obtener_metricas_paginadas
 )
-from modulos.base_datos.operaciones.productos import vaciar_productos_por_usuario
+from modulos.base_datos.operaciones.productos import obtener_producto, vaciar_productos_por_usuario
 from modulos.indexador.indexador import IndexadorRAG
 from modulos.base_datos.operaciones.reportes import generar_excel_resenas, generar_pdf_resumen_ejecutivo
 from modulos.seguridad.autenticacion import obtener_usuario_actual
@@ -151,6 +151,18 @@ async def endpoint_exportar_excel(
     Genera dinámicamente el libro de Excel con todas las opiniones 
     del ASIN y lo envía al frontend como una descarga binaria.
     """
+
+    asin_limpio = asin.strip().upper()
+    usuario_str = str(usuario_id).strip()
+
+    # 🛡️ VALIDACIÓN BOLA
+    producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, usuario_str)
+    if not producto_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No se encontró el producto o no tienes permisos para exportarlo."
+        )
+    
     try:
         # Generamos el buffer binario en memoria
         buffer_excel = generar_excel_resenas(asin=asin, usuario_id=usuario_id)
@@ -184,6 +196,17 @@ async def endpoint_exportar_pdf(
     """
     Genera dinámicamente un resumen ejecutivo en PDF y lo transmite como binario.
     """
+    asin_limpio = asin.strip().upper()
+    usuario_str = str(usuario_id).strip()
+
+    # 🛡️ VALIDACIÓN BOLA
+    producto_data = await asyncio.to_thread(obtener_producto, asin_limpio, usuario_str)
+    if not producto_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No se encontró el producto o no tienes permisos para exportarlo."
+        )
+    
     try:
         buffer_pdf = generar_pdf_resumen_ejecutivo(asin=asin, usuario_id=usuario_id)
         
