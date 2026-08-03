@@ -4,18 +4,12 @@ from slowapi import Limiter
 
 def obtener_ip_cliente_segura(request: Request) -> str:
     """
-    Estrategia defensiva para extraer la IP real detrás de proxies como Render/ngrok.
+    Estrategia estricta solicitada por la auditoría (Ronda 8 - REV-2026-R8-01).
+    Calcula el rate-limit estrictamente sobre la IP real del socket de conexión
+    para evitar por completo el bypass por rotación/falsificación de la cabecera X-Forwarded-For.
     """
-    # 1. Intentamos leer la cabecera estándar de proxies
-    x_forwarded_for = request.headers.get("X-Forwarded-For")
-    
-    if x_forwarded_for:
-        # El atacante puede falsificar el inicio, pero el proxy (Render/ngrok) 
-        # SIEMPRE añade la IP real de forma segura al final de la lista.
-        ips = [ip.strip() for ip in x_forwarded_for.split(",")]
-        return ips[-1] # Tomamos la última IP, que es la confiable
-        
-    # 2. Si no hay proxy (ej. desarrollo local directo), usamos la conexión
+    # 🛡️ MITIGACIÓN CRÍTICA: Ignorar cabeceras X-Forwarded-For inyectables por el cliente.
+    # Se utiliza request.client.host para evaluar la IP real de la conexión establecida del socket.
     if request.client and request.client.host:
         return request.client.host
         

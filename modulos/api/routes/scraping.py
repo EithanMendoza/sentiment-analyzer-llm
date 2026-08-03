@@ -26,6 +26,8 @@ from modulos.api.rate_limiter import limiter
 
 router = APIRouter()
 orquestador = ControladorRAG()
+# 🛡️ CONSTANTE DE SEGURIDAD PARA VALIDACIÓN ESTRICTA DE ASIN (Ronda 8 - REV-2026-R8-04)
+ASIN_RE = re.compile(r"^[A-Z0-9]{10}$")
 
 
 def extraer_asin_de_url(texto: str) -> str:
@@ -103,22 +105,37 @@ async def iniciar_scraping(
     """
     Inicia la extracción profunda analizando la URL bajo parámetros de seguridad estrictos.
     Integra fallback multiusuario para evitar duplicidad de costos en tareas idénticas.
+    Mitiga REV-2026-R8-04 sanitizando queries y fragmentos mediante aislamiento estricto de ASIN.
     """
-    asin = extraer_asin_de_url(solicitud.url_o_asin)
-    if not asin:
+    
+    # 1. 🛡️ EXTRAER Y SANITIZAR EL ASIN INICIALMENTE
+    url_o_asin_sucia = solicitud.url_o_asin.strip()
+    
+    # Usamos tu función existente para extraer el ASIN base de la URL
+    asin_extraido = extraer_asin_de_url(url_o_asin_sucia)
+    
+    if not ...:  # Si tu función interna no lo detecta
+        asin_extraido = url_o_asin_sucia
+
+    asin_limpio = str(asin_extraido).strip().upper()
+
+    # 2. 🛡️ VALIDACIÓN ESTRICTA MEDIANTE REGEX DE HARDENING (Evita inyección de queries/fragmentos)
+    if not ASIN_RE.fullmatch(asin_limpio):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No se pudo encontrar un ASIN válido o la estructura de la URL no está permitida."
         )
 
-    asin_limpio = asin.upper()
+    # 3. 🛡️ RECONSTRUCCIÓN SEGURA DE LA URL INTERNA (Defensa en profundidad contra SSRF)
+    # De esta manera, si la cadena original traía '?redirect=http://...', queda completamente destruida.
+    url_segura_amazon = f"https://www.amazon.com/dp/{asin_limpio}"
+    
     usuario_str = str(usuario_id).strip()
 
     # === VÍA RÁPIDA: Aislamiento multiusuario con fallback controlado ===
     def verificar_resenas_existentes(asin_target: str, uid: str) -> bool:
         conn = obtener_conexion()
         c = conn.cursor()
-        # Modificado para alinearse con el motor unificado de métricas
         c.execute('''
             SELECT COUNT(*) FROM resenas r
             JOIN productos p ON UPPER(TRIM(r.asin)) = UPPER(TRIM(p.asin))
@@ -155,6 +172,8 @@ async def iniciar_scraping(
 
     estados_tareas[asin_limpio] = "procesando"
 
+    # Lanzamos la tarea pasando el ASIN sanitizado y verificado
+    # (Si tu orquestador requiere internamente una URL, puedes pasarle 'url_segura_amazon')
     tareas_fondo.add_task(
         orquestador.procesar_nuevo_producto, 
         asin_limpio, 
@@ -167,7 +186,6 @@ async def iniciar_scraping(
         "asin": asin_limpio,
         "mensaje": f"Scraping y vectorización iniciados en segundo plano para el ASIN {asin_limpio}."
     }
-
 
 @router.get("/scraper/estado/stream/{asin}")
 @limiter.limit("10/minute")

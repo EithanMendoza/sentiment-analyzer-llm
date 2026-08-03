@@ -9,7 +9,8 @@ como cookie HttpOnly).
 import os
 import asyncio
 import httpx
-from datetime import datetime, timezone
+from collections import defaultdict
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException, status, Depends, Request, Response
 from jose import jwt
 from pydantic import ValidationError
@@ -43,11 +44,30 @@ router = APIRouter()
 # 🔐 CLAVE SECRETA DE CLOUDFLARE TURNSTILE
 TURNSTILE_SECRET = os.getenv("TURNSTILE_SECRET_KEY", "0x4AAAAAAD_uOvS5o03zJR6vtBmyUwnomlE")
 
-# 🍪 Configuración de la cookie de sesión
-COOKIE_NAME = "access_token"
+# 🍪 Configuración de la cookie de sesión (Mitigación: Prefijo __Host- requerido en R8)
+COOKIE_NAME = "__Host-access_token"
 COOKIE_MAX_AGE = 60 * 60 * 2  # 2 horas — igual que ACCESS_TOKEN_EXPIRE_MINUTES
 # En local (sin HTTPS) "Secure" bloquearía la cookie; en producción debe ir en True.
 COOKIE_SECURE = os.getenv("ENTORNO", "produccion").lower() != "desarrollo"
+
+# 🛡️ ESTRUCTURAS DE SEGURIDAD PARA EL LOGIN (TIMING ORACLE & ACCOUNT LOCKOUT)
+DUMMY_HASH = "$2b$12$KIXE4I3R6Ew9u.A9p2G2.O.Y.Xb8vOQ3Y7yK8y9u2e4.z/aX3qH1O"
+intentos_fallidos = defaultdict(list)
+MAX_FALLOS = 5
+VENTANA_BLOQUEO = timedelta(minutes=15)
+
+def cuenta_bloqueada(email: str) -> bool:
+    ahora = datetime.now(timezone.utc)
+    # Limpiamos los intentos viejos fuera del rango de 15 minutos
+    intentos_fallidos[email] = [t for t in intentos_fallidos[email] if ahora - t < VENTANA_BLOQUEO]
+    return len(intentos_fallidos[email]) >= MAX_FALLOS
+
+def registrar_fallo(email: str) -> None:
+    intentos_fallidos[email].append(datetime.now(timezone.utc))
+
+def limpiar_fallos(email: str) -> None:
+    if email in intentos_fallidos:
+        del intentos_fallidos[email]
 
 
 async def verificar_token_cloudflare(token: str) -> bool:
@@ -110,39 +130,51 @@ async def registrar_usuario(
 async def iniciar_sesion(
     request: Request,
     response: Response,
-    credenciales: UsuarioLogin  # 👈 ¡ESTA ES LA MAGIA! Al ponerlo aquí, Swagger ya sabe qué pedir.
+    credenciales: UsuarioLogin
 ):
     """
     Verifica las credenciales y entrega el JWT en una cookie HttpOnly válida por 2 horas.
-    Protegido contra ataques de fuerza bruta y NoSQLi mediante validación estricta de Pydantic.
+    Protegido contra ataques de fuerza bruta, Time-oracles y NoSQLi.
     """
-    
-    # Al usar 'credenciales: UsuarioLogin', FastAPI ya hizo la validación por nosotros.
-    # Si mandan objetos raros o inyecciones, FastAPI lanza el error 422 automáticamente.
     email = credenciales.email
     password = credenciales.password
 
-    # 👇 LÍNEAS TEMPORALES DE DEBUG DE IP 👇
+    # 1. VALIDACIÓN CONTRA ACCOUNT LOCKOUT (Fuerza Bruta)
+    if cuenta_bloqueada(email):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiados intentos fallidos. Cuenta bloqueada temporalmente por 15 minutos."
+        )
+
+    # LÍNEAS TEMPORALES DE DEBUG DE IP
     ip_cabecera = request.headers.get("X-Forwarded-For", "No existe")
     ip_detectada = request.client.host
     print(f"\n[DEBUG SEGURIDAD] X-Forwarded-For: {ip_cabecera} | IP Cliente (FastAPI): {ip_detectada}\n")
-    # 👆 HASTA AQUÍ 👆
 
     usuario_db = await asyncio.to_thread(obtener_usuario_por_correo, email)
 
-    if not usuario_db or not verificar_password(password, usuario_db["password_hash"]):
+    # 2. MITIGACIÓN CONTRA TIMING ORACLE:
+    # Si el usuario no existe en la BD, se evalúa contra DUMMY_HASH para equiparar tiempos.
+    hash_a_verificar = usuario_db["password_hash"] if usuario_db else DUMMY_HASH
+    password_valida = verificar_password(password, hash_a_verificar)
+
+    if not usuario_db or not password_valida:
+        registrar_fallo(email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Correo o contraseña incorrectos",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # 3. LOGIN EXITOSO -> Limpiamos el contador de fallos de la cuenta
+    limpiar_fallos(email)
+
     # Token JWT estrictamente blindado (solo lleva el identificador 'sub')
     token_jwt = crear_token_acceso(data={
         "sub": usuario_db["id"]
     })
 
-    # 🍪 MITIGACIÓN XSS: el JWT viaja en una cookie HttpOnly
+    # 🍪 MITIGACIÓN XSS: el JWT viaja en una cookie HttpOnly con prefijo __Host-
     response.set_cookie(
         key=COOKIE_NAME,
         value=token_jwt,

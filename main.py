@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -9,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-# ✅ IMPORTAMOS EL LIMITER DESDE EL NUEVO ARCHIVO NEUTRAL
+# ✅ IMPORTAMOS EL LIMITER DESDE EL ARCHIVO NEUTRAL
 from modulos.api.rate_limiter import limiter
 
 # Importamos el motor
@@ -17,10 +18,8 @@ from modulos.agente.motor import MotorAnaliticoLineal
 from modulos.seguridad.autenticacion import obtener_usuario_actual
 from modulos.base_datos.tablas_setup import inicializar_base_datos
 
-# Importamos nuestro nuevo router modular
+# Importamos los routers modulares
 from modulos.api.routes import chat, herramientas, metricas, auth, historial, scraping
-
-
 
 
 async def ciclo_vida_api(app: FastAPI):
@@ -49,6 +48,7 @@ async def ciclo_vida_api(app: FastAPI):
     print("\n[SHUTDOWN] Apagando el servidor y liberando recursos.")
     app.state.motor_ia = None
 
+
 # ✅ Leemos el entorno para decidir si exponemos la documentación de la API
 ENTORNO = os.getenv("ENTORNO", "produccion").lower()
 
@@ -65,25 +65,36 @@ app = FastAPI(
     openapi_url="/openapi.json" if ENTORNO == "desarrollo" else None
 )
 
-# Configuramos la URL de Redis.
-REDIS_URL = os.getenv("REDIS_URL", "memory://")
-
-# ✅ REV-2026-02: Se eliminó la doble inicialización redundante del Limiter
-
-
 # Registramos el limitador
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
-# ✅ REV-2026-01 & REV-2026-03: Middleware de Seguridad y Validación de Content-Type
+# ✅ REV-2026-R8-05 & REV-2026-R8-08: Middleware de Seguridad Global, CSRF y Content-Type
 @app.middleware("http")
 async def middleware_seguridad_global(request: Request, call_next):
-    # Validación estricta de Content-Type para peticiones que envían datos
+    # 1. 🛡️ PROTECCIÓN CSRF MEDIANTE VALIDACIÓN DE ORIGIN / REFERER EN MÉTODOS MUTABLES
+    if request.method in ["POST", "PUT", "PATCH", "DELETE"]:
+        origin = request.headers.get("origin") or request.headers.get("referer")
+        if origin:
+            parsed_origin = urlparse(origin)
+            netloc = parsed_origin.netloc
+            # Validamos que provenga del frontend oficial o de entornos de desarrollo autorizados
+            es_origen_valido = (
+                netloc == "review-agent-frontend.onrender.com" or
+                netloc.startswith("localhost") or
+                netloc.startswith("127.0.0.1")
+            )
+            if not es_origen_valido:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Origen no permitido por políticas de seguridad CSRF."}
+                )
+
+    # 2. Validación estricta de Content-Type para peticiones que envían datos
     if request.method in ["POST", "PUT", "PATCH"]:
         content_type = request.headers.get("Content-Type", "")
         
-        # 👇 Agregamos application/x-www-form-urlencoded a los formatos permitidos
         if not content_type.startswith("application/json") and \
            not content_type.startswith("multipart/form-data") and \
            not content_type.startswith("application/x-www-form-urlencoded"):
@@ -94,12 +105,14 @@ async def middleware_seguridad_global(request: Request, call_next):
             
     response = await call_next(request)
     
-    # Inyección de cabeceras de seguridad obligatorias
+    # 3. Inyección de cabeceras de seguridad HTTP completas
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
     
-    # CSP modificado: Permite Swagger UI (jsdelivr) y estilos en línea
+    # CSP: Permite Swagger UI (jsdelivr) en desarrollo y restricciones frame-ancestors
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
@@ -108,7 +121,7 @@ async def middleware_seguridad_global(request: Request, call_next):
         "frame-ancestors 'none';"
     )
 
-    # Mitigación REV-2026-06 (Fuga del header Server)
+    # Mitigación REV-2026-06 (Ocultar versión de Server)
     if "server" in response.headers:
         del response.headers["server"]
         
@@ -120,14 +133,13 @@ async def middleware_seguridad_global(request: Request, call_next):
 # ✅ REV-2026-05: Manejador estricto para ocultar el esquema de Pydantic
 @app.exception_handler(RequestValidationError)
 async def ocultar_esquema_pydantic_handler(request: Request, exc: RequestValidationError):
-    # 1. Mantenemos el log interno para que tú puedas ver el error real en tu consola/terminal
-    print(f"⚠️ [VALIACIÓN 422] Error de entrada en {request.url.path}: {exc.errors()}")
+    print(f"⚠️ [VALIDACIÓN 422] Error de entrada en {request.url.path}: {exc.errors()}")
     
-    # 2. Devolvemos SIEMPRE una respuesta genérica al cliente (evita fugas de esquemas)
     return JSONResponse(
         status_code=422,
         content={"detail": "Datos de entrada inválidos. Verifica el formato de la solicitud."}
     )
+
 
 # ✅ REV-2026-04: Hardening de CORS
 app.add_middleware(
@@ -137,10 +149,9 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "https://review-agent-frontend.onrender.com"
     ],
-    # 👇 Acepta dinámicamente cualquier localhost o 127.0.0.1 sin importar el puerto
     allow_origin_regex=r"^http://(?:localhost|127\.0\.0\.1):\d+$",
     allow_credentials=True, 
-    allow_methods=["GET", "POST", "PUT", "OPTIONS"], # 👈 Quitamos "DELETE" para pasar la auditoría
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"], 
     expose_headers=["X-Session-ID"]
 )
@@ -192,7 +203,6 @@ app.include_router(
 @limiter.limit("5/minute")
 async def verificar_estado(
     request: Request,
-    # 🛡️ MITIGACIÓN: Inyectamos la dependencia para que solo usuarios válidos vean el estado
     usuario_id: str = Depends(obtener_usuario_actual) 
 ):
     """Verifica si el servidor está arriba y si el motor RAG cargó bien (Protegido)."""
