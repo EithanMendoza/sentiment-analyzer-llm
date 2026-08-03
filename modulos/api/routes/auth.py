@@ -28,6 +28,14 @@ from modulos.base_datos.operaciones.usuarios import (
     obtener_usuario_por_id,
 )
 
+# 3.1 NUEVO: control de sesión única por usuario y por IP
+from modulos.base_datos.operaciones.sesiones_login import (
+    obtener_sesion_activa_usuario,
+    obtener_usuario_activo_por_ip,
+    registrar_sesion_activa,
+    eliminar_sesion_activa,
+)
+
 # 4. Importamos utilidades de seguridad reales y Rate Limiting
 from modulos.seguridad.autenticacion import (
     obtener_hash_password,
@@ -45,10 +53,17 @@ router = APIRouter()
 TURNSTILE_SECRET = os.getenv("TURNSTILE_SECRET_KEY", "0x4AAAAAAD_uOvS5o03zJR6vtBmyUwnomlE")
 
 # 🍪 Configuración de la cookie de sesión (Mitigación: Prefijo __Host- requerido en R8)
-COOKIE_NAME = "__Host-access_token"
-COOKIE_MAX_AGE = 60 * 60 * 2  # 2 horas — igual que ACCESS_TOKEN_EXPIRE_MINUTES
+COOKIE_MAX_AGE = 60 * 60 * 2  # 2 horas — igual que ACCESS_TOKEN_EXPIRE_MINUTES y que DURACION_SESION en sesiones_login.py
 # En local (sin HTTPS) "Secure" bloquearía la cookie; en producción debe ir en True.
 COOKIE_SECURE = os.getenv("ENTORNO", "produccion").lower() != "desarrollo"
+# ⚠️ El prefijo __Host- EXIGE que la cookie viaje con Secure sobre HTTPS real:
+# el navegador la descarta por completo (sin error visible) si se sirve sobre
+# http://localhost. Y SameSite=None también exige Secure, así que en desarrollo
+# (sin HTTPS) ninguna de las dos combinaciones de producción puede funcionar.
+# Por eso en ENTORNO=desarrollo usamos un nombre de cookie sin el prefijo y
+# SameSite=Lax, que sí se puede guardar sobre HTTP.
+COOKIE_NAME = "__Host-access_token" if COOKIE_SECURE else "access_token_dev"
+COOKIE_SAMESITE = "none" if COOKIE_SECURE else "lax"
 
 # 🛡️ ESTRUCTURAS DE SEGURIDAD PARA EL LOGIN (TIMING ORACLE & ACCOUNT LOCKOUT)
 DUMMY_HASH = "$2b$12$KIXE4I3R6Ew9u.A9p2G2.O.Y.Xb8vOQ3Y7yK8y9u2e4.z/aX3qH1O"
@@ -68,6 +83,36 @@ def registrar_fallo(email: str) -> None:
 def limpiar_fallos(email: str) -> None:
     if email in intentos_fallidos:
         del intentos_fallidos[email]
+
+
+def obtener_ip_cliente(request: Request) -> str:
+    """
+    Determina la IP real del cliente para las decisiones de seguridad
+    (sesión única / una cuenta por IP).
+
+    request.client.host es la fuente confiable por defecto: la pone el
+    servidor ASGI a partir de la conexión TCP real y el cliente NO puede
+    falsificarla enviando headers.
+
+    Solo se usa X-Forwarded-For cuando la app corre detrás de un proxy de
+    confianza (Nginx, ngrok, load balancer, etc.) y eso se activa
+    explícitamente con la variable de entorno CONFIAR_PROXY=1. Nunca por
+    defecto: si el backend fuera alcanzable directamente, cualquiera
+    podría mandar un X-Forwarded-For falso y evadir el bloqueo por IP,
+    o peor, hacer que el sistema "culpe" a la IP de otra persona.
+
+    ⚠️ Si actualmente prueban la app a través de ngrok (el header
+    'ngrok-skip-browser-warning' que manda el frontend sugiere que sí),
+    request.client.host va a mostrar la IP del túnel de ngrok para TODOS
+    los usuarios, lo que rompería el bloqueo por IP (bloquearía a todo el
+    mundo entre sí). En ese caso deben correr con CONFIAR_PROXY=1, porque
+    ngrok sí reenvía la IP real del cliente en X-Forwarded-For.
+    """
+    if os.getenv("CONFIAR_PROXY", "0") == "1":
+        xff = request.headers.get("X-Forwarded-For")
+        if xff:
+            return xff.split(",")[0].strip()
+    return request.client.host
 
 
 async def verificar_token_cloudflare(token: str) -> bool:
@@ -134,7 +179,8 @@ async def iniciar_sesion(
 ):
     """
     Verifica las credenciales y entrega el JWT en una cookie HttpOnly válida por 2 horas.
-    Protegido contra ataques de fuerza bruta, Time-oracles y NoSQLi.
+    Protegido contra ataques de fuerza bruta, Time-oracles, NoSQLi, sesiones
+    duplicadas y múltiples cuentas operando desde la misma IP.
     """
     email = credenciales.email
     password = credenciales.password
@@ -146,10 +192,11 @@ async def iniciar_sesion(
             detail="Demasiados intentos fallidos. Cuenta bloqueada temporalmente por 15 minutos."
         )
 
+    ip_cliente = obtener_ip_cliente(request)
+
     # LÍNEAS TEMPORALES DE DEBUG DE IP
     ip_cabecera = request.headers.get("X-Forwarded-For", "No existe")
-    ip_detectada = request.client.host
-    print(f"\n[DEBUG SEGURIDAD] X-Forwarded-For: {ip_cabecera} | IP Cliente (FastAPI): {ip_detectada}\n")
+    print(f"\n[DEBUG SEGURIDAD] X-Forwarded-For: {ip_cabecera} | IP Cliente (FastAPI): {request.client.host} | IP usada para lógica: {ip_cliente}\n")
 
     usuario_db = await asyncio.to_thread(obtener_usuario_por_correo, email)
 
@@ -166,8 +213,32 @@ async def iniciar_sesion(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # 3. LOGIN EXITOSO -> Limpiamos el contador de fallos de la cuenta
+    # 3. LOGIN EXITOSO (credenciales correctas) -> Limpiamos el contador de fallos de la cuenta
     limpiar_fallos(email)
+
+    # 3.1 NUEVO: SESIÓN ÚNICA Y UNA CUENTA POR IP
+    # Se evalúa DESPUÉS de validar la contraseña a propósito: si se hiciera
+    # antes, alguien sin la contraseña correcta podría usar estas respuestas
+    # para averiguar si una cuenta tiene sesión activa (fuga de información).
+    sesion_propia = await asyncio.to_thread(obtener_sesion_activa_usuario, usuario_db["id"])
+    if sesion_propia:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "codigo": "sesion_activa",
+                "mensaje": "Ya tienes una sesión activa en otro dispositivo o pestaña. Cierra esa sesión antes de iniciar una nueva."
+            }
+        )
+
+    usuario_en_ip = await asyncio.to_thread(obtener_usuario_activo_por_ip, ip_cliente)
+    if usuario_en_ip and usuario_en_ip != usuario_db["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "codigo": "ip_bloqueada",
+                "mensaje": "Esta red ya tiene una cuenta con sesión activa. No se permite más de una cuenta por conexión."
+            }
+        )
 
     # Token JWT estrictamente blindado (solo lleva el identificador 'sub')
     token_jwt = crear_token_acceso(data={
@@ -180,10 +251,30 @@ async def iniciar_sesion(
         value=token_jwt,
         httponly=True,
         secure=COOKIE_SECURE, 
-        samesite="none",      
+        samesite=COOKIE_SAMESITE,      
         max_age=COOKIE_MAX_AGE,
         path="/",
     )
+
+    # Registramos la sesión activa DESPUÉS de emitir la cookie pero antes de
+    # responder. Si el registro falla (alguien ganó la carrera justo ahora),
+    # revertimos la cookie y no dejamos pasar el login.
+    registrado = await asyncio.to_thread(registrar_sesion_activa, usuario_db["id"], ip_cliente)
+    if not registrado:
+        response.delete_cookie(
+            key=COOKIE_NAME,
+            path="/",
+            httponly=True,
+            samesite=COOKIE_SAMESITE,
+            secure=COOKIE_SECURE
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "codigo": "sesion_activa",
+                "mensaje": "No se pudo iniciar sesión, intenta de nuevo."
+            }
+        )
 
     return {
         "id": usuario_db["id"],
@@ -220,8 +311,9 @@ async def cerrar_sesion(
     response: Response
 ):
     """
-    Invalida el token JWT del usuario actual añadiéndolo a la lista negra en la BD
-    y borra la cookie de sesión en el navegador incondicionalmente.
+    Invalida el token JWT del usuario actual añadiéndolo a la lista negra en la BD,
+    libera su sesión activa (para que pueda volver a loguearse o hacerlo desde otra
+    IP) y borra la cookie de sesión en el navegador incondicionalmente.
     """
     # 1. Intentamos recuperar el token de las cookies manualmente para no bloquear la ejecución
     token = request.cookies.get(COOKIE_NAME)
@@ -234,6 +326,7 @@ async def cerrar_sesion(
             # options={"verify_exp": False} asegura que si el token ya expiró, igual lo podamos añadir a la blacklist
             payload = jwt.decode(token, PUBLIC_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
             exp_timestamp = payload.get("exp")
+            usuario_id = payload.get("sub")
 
             if exp_timestamp:
                 expiracion = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -251,6 +344,11 @@ async def cerrar_sesion(
                 conn.close()
 
             await asyncio.to_thread(revocar_token)
+
+            # 1.1 NUEVO: liberamos la sesión activa del usuario para que pueda
+            # volver a loguearse (desde esta u otra IP) inmediatamente.
+            if usuario_id:
+                await asyncio.to_thread(eliminar_sesion_activa, usuario_id)
         except Exception as e:
             print(f"[ERROR LOGOUT ENDPOINT]: {e}")
             
@@ -259,7 +357,7 @@ async def cerrar_sesion(
         key=COOKIE_NAME,
         path="/",
         httponly=True,
-        samesite="none",
+        samesite=COOKIE_SAMESITE,
         secure=COOKIE_SECURE
     )
     

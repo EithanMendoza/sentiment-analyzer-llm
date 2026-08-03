@@ -17,6 +17,7 @@ from modulos.api.rate_limiter import limiter
 from modulos.agente.motor import MotorAnaliticoLineal
 from modulos.seguridad.autenticacion import obtener_usuario_actual
 from modulos.base_datos.tablas_setup import inicializar_base_datos
+from modulos.base_datos.operaciones.sesiones_login import inicializar_tabla_sesiones_activas
 
 # Importamos los routers modulares
 from modulos.api.routes import chat, herramientas, metricas, auth, historial, scraping
@@ -30,6 +31,7 @@ async def ciclo_vida_api(app: FastAPI):
     print("[INFO] Verificando e inicializando tablas de la base de datos...")
     try:
         inicializar_base_datos()
+        inicializar_tabla_sesiones_activas()
         print("[INFO] Base de datos relacional lista y blindada.")
     except Exception as e:
         print(f"[ERROR FATAL] No se pudo crear/verificar la base de datos: {e}")
