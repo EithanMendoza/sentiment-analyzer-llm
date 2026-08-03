@@ -142,13 +142,13 @@ async def iniciar_sesion(
         "sub": usuario_db["id"]
     })
 
-    # 🍪 MITIGACIÓN XSS: el JWT viaja en una cookie HttpOnly + SameSite=Strict
+    # 🍪 MITIGACIÓN XSS: el JWT viaja en una cookie HttpOnly
     response.set_cookie(
         key=COOKIE_NAME,
         value=token_jwt,
         httponly=True,
-        secure=COOKIE_SECURE,
-        samesite="strict",
+        secure=COOKIE_SECURE, 
+        samesite="none",      
         max_age=COOKIE_MAX_AGE,
         path="/",
     )
@@ -227,7 +227,7 @@ async def cerrar_sesion(
         key=COOKIE_NAME,
         path="/",
         httponly=True,
-        samesite="strict",
+        samesite="none",
         secure=COOKIE_SECURE
     )
     
