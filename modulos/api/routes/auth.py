@@ -63,7 +63,7 @@ COOKIE_SECURE = os.getenv("ENTORNO", "produccion").lower() != "desarrollo"
 # Por eso en ENTORNO=desarrollo usamos un nombre de cookie sin el prefijo y
 # SameSite=Lax, que sí se puede guardar sobre HTTP.
 COOKIE_NAME = "__Host-access_token" if COOKIE_SECURE else "access_token_dev"
-COOKIE_SAMESITE = "none" if COOKIE_SECURE else "lax"
+COOKIE_SAMESITE = "strict" if COOKIE_SECURE else "lax"
 
 # 🛡️ ESTRUCTURAS DE SEGURIDAD PARA EL LOGIN (TIMING ORACLE & ACCOUNT LOCKOUT)
 DUMMY_HASH = "$2b$12$KIXE4I3R6Ew9u.A9p2G2.O.Y.Xb8vOQ3Y7yK8y9u2e4.z/aX3qH1O"
