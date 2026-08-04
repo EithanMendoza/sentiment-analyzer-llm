@@ -169,7 +169,6 @@ async def registrar_usuario(
         )
     return {"mensaje": "Usuario creado exitosamente", "id": nuevo_id}
 
-
 @router.post("/login", response_model=SesionUsuario)
 @limiter.limit("5/minute")
 async def iniciar_sesion(
@@ -179,8 +178,7 @@ async def iniciar_sesion(
 ):
     """
     Verifica las credenciales y entrega el JWT en una cookie HttpOnly válida por 2 horas.
-    Protegido contra ataques de fuerza bruta, Time-oracles, NoSQLi, sesiones
-    duplicadas y múltiples cuentas operando desde la misma IP.
+    Protegido contra ataques de fuerza bruta, Time-oracles y NoSQLi.
     """
     email = credenciales.email
     password = credenciales.password
@@ -216,29 +214,30 @@ async def iniciar_sesion(
     # 3. LOGIN EXITOSO (credenciales correctas) -> Limpiamos el contador de fallos de la cuenta
     limpiar_fallos(email)
 
-    # 3.1 NUEVO: SESIÓN ÚNICA Y UNA CUENTA POR IP
-    # Se evalúa DESPUÉS de validar la contraseña a propósito: si se hiciera
-    # antes, alguien sin la contraseña correcta podría usar estas respuestas
-    # para averiguar si una cuenta tiene sesión activa (fuga de información).
-    sesion_propia = await asyncio.to_thread(obtener_sesion_activa_usuario, usuario_db["id"])
-    if sesion_propia:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "codigo": "sesion_activa",
-                "mensaje": "Ya tienes una sesión activa en otro dispositivo o pestaña. Cierra esa sesión antes de iniciar una nueva."
-            }
-        )
-
-    usuario_en_ip = await asyncio.to_thread(obtener_usuario_activo_por_ip, ip_cliente)
-    if usuario_en_ip and usuario_en_ip != usuario_db["id"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "codigo": "ip_bloqueada",
-                "mensaje": "Esta red ya tiene una cuenta con sesión activa. No se permite más de una cuenta por conexión."
-            }
-        )
+    # =================================================================
+    # 3.1 SESIÓN ÚNICA Y UNA CUENTA POR IP (COMENTADO PARA PRUEBAS)
+    # Para reactivarlo en el futuro, solo quita los '#' de este bloque
+    # =================================================================
+    # sesion_propia = await asyncio.to_thread(obtener_sesion_activa_usuario, usuario_db["id"])
+    # if sesion_propia:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_409_CONFLICT,
+    #         detail={
+    #             "codigo": "sesion_activa",
+    #             "mensaje": "Ya tienes una sesión activa en otro dispositivo o pestaña. Cierra esa sesión antes de iniciar una nueva."
+    #         }
+    #     )
+    #
+    # usuario_en_ip = await asyncio.to_thread(obtener_usuario_activo_por_ip, ip_cliente)
+    # if usuario_en_ip and usuario_en_ip != usuario_db["id"]:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail={
+    #             "codigo": "ip_bloqueada",
+    #             "mensaje": "Esta red ya tiene una cuenta con sesión activa. No se permite más de una cuenta por conexión."
+    #         }
+    #     )
+    # =================================================================
 
     # Token JWT estrictamente blindado (solo lleva el identificador 'sub')
     token_jwt = crear_token_acceso(data={
@@ -256,25 +255,26 @@ async def iniciar_sesion(
         path="/",
     )
 
-    # Registramos la sesión activa DESPUÉS de emitir la cookie pero antes de
-    # responder. Si el registro falla (alguien ganó la carrera justo ahora),
-    # revertimos la cookie y no dejamos pasar el login.
-    registrado = await asyncio.to_thread(registrar_sesion_activa, usuario_db["id"], ip_cliente)
-    if not registrado:
-        response.delete_cookie(
-            key=COOKIE_NAME,
-            path="/",
-            httponly=True,
-            samesite=COOKIE_SAMESITE,
-            secure=COOKIE_SECURE
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "codigo": "sesion_activa",
-                "mensaje": "No se pudo iniciar sesión, intenta de nuevo."
-            }
-        )
+    # =================================================================
+    # REGISTRO DE SESIÓN EN BD (COMENTADO PARA EVITAR CONFLICTO DE IP)
+    # =================================================================
+    # registrado = await asyncio.to_thread(registrar_sesion_activa, usuario_db["id"], ip_cliente)
+    # if not registrado:
+    #     response.delete_cookie(
+    #         key=COOKIE_NAME,
+    #         path="/",
+    #         httponly=True,
+    #         samesite=COOKIE_SAMESITE,
+    #         secure=COOKIE_SECURE
+    #     )
+    #     raise HTTPException(
+    #         status_code=status.HTTP_409_CONFLICT,
+    #         detail={
+    #             "codigo": "sesion_activa",
+    #             "mensaje": "No se pudo iniciar sesión, intenta de nuevo."
+    #         }
+    #     )
+    # =================================================================
 
     return {
         "id": usuario_db["id"],
