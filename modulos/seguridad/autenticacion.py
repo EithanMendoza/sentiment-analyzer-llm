@@ -6,6 +6,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from modulos.base_datos.conexion import obtener_conexion
+from fastapi import Request
 
 # Cargar las variables de entorno desde el archivo .env
 load_dotenv()
@@ -66,13 +67,15 @@ def crear_token_acceso(data: dict) -> str:
 # protegidas: el JWT viaja en una cookie HttpOnly, no en el header Authorization.
 esquema_oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
+COOKIE_SECURE = os.getenv("ENTORNO", "produccion").lower() != "desarrollo"
+COOKIE_NAME = "__Host-access_token" if COOKIE_SECURE else "access_token_dev"
 
-def obtener_token_cookie(token: str = Cookie(default=None, alias="__Host-access_token")) -> str:
+def obtener_token_cookie(request: Request) -> str:
     """
-    Extrae el JWT desde la cookie HttpOnly blindada '__Host-access_token'.
-    Reemplaza al header 'Authorization: Bearer' como fuente del token,
-    para que el JWT nunca sea accesible desde JavaScript (mitigación XSS).
+    Extrae el JWT desde la cookie HttpOnly dinámicamente según el entorno.
     """
+    token = request.cookies.get(COOKIE_NAME)
+    
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
